@@ -171,14 +171,7 @@ namespace InterpoLoot
 
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
                 
-                GameObject clone = InterpoLootMain.CreateVisualClone(gear);
-                clone.transform.position = startPos;
-                clone.transform.rotation = startRot;
-                clone.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
-                
-                InterpoLootMain.StartQuickLootAnimation(clone, gear, () => {
-                    UnityEngine.Object.Destroy(clone);
-                });
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {}, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
                 
                 InterpoLootMain.isTakingItem = true;
             }
@@ -202,16 +195,7 @@ namespace InterpoLoot
                 UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition + (camFwd * 0.5f);
                 
-                GameObject clone = InterpoLootMain.CreateVisualClone(gear);
-                clone.transform.position = startPos;
-                clone.transform.rotation = gear.transform.rotation;
-                clone.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
-                
-                gear.gameObject.SetActive(false);
-                
-                InterpoLootMain.StartQuickLootAnimation(clone, gear, () => {
-                    UnityEngine.Object.Destroy(clone);
-                });
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {}, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, gear.transform.rotation);
             }
             return true; // Let vanilla handle container removal
         }
@@ -285,20 +269,12 @@ namespace InterpoLoot
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
                 
-                GameObject clone = InterpoLootMain.CreateVisualClone(__0);
-                clone.transform.position = startPos;
-                clone.transform.rotation = startRot;
-                clone.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
-                
-                __0.gameObject.SetActive(false);
-                
-                InterpoLootMain.StartQuickLootAnimation(clone, __0, () => {
-                    UnityEngine.Object.Destroy(clone);
-                    
+                InterpoLootMain.StartQuickLootAnimation(__0.gameObject, __0, () => {
+                    __0.gameObject.SetActive(false);
                     InterpoLootMain.isEatingFromInspect = true;
                     __instance.UseInventoryItem(__0, false);
                     InterpoLootMain.isEatingFromInspect = false;
-                });
+                }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
                 return false;
             }
 
@@ -336,20 +312,12 @@ namespace InterpoLoot
                     Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                     UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
                     
-                    GameObject clone = InterpoLootMain.CreateVisualClone(gearItem);
-                    clone.transform.position = startPos;
-                    clone.transform.rotation = startRot;
-                    clone.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
-                    
-                    gearItem.gameObject.SetActive(false);
-                    
-                    InterpoLootMain.StartQuickLootAnimation(clone, gearItem, () => {
-                        UnityEngine.Object.Destroy(clone);
-                        
+                    InterpoLootMain.StartQuickLootAnimation(gearItem.gameObject, gearItem, () => {
+                        gearItem.gameObject.SetActive(false);
                         InterpoLootMain.isEatingFromInspect = true;
                         __instance.UseInventoryItem(gearItem, false);
                         InterpoLootMain.isEatingFromInspect = false;
-                    });
+                    }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
                     return false;
                 }
 
@@ -522,21 +490,14 @@ namespace InterpoLoot
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
                 
-                GameObject clone = InterpoLootMain.CreateVisualClone(gear);
-                clone.transform.position = startPos;
-                clone.transform.rotation = startRot;
-                
-                gear.gameObject.SetActive(false);
-                
-                InterpoLootMain.StartQuickLootAnimation(clone, gear, () => {
-                    UnityEngine.Object.Destroy(clone);
-                    
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {
+                    gear.gameObject.SetActive(false);
                     __instance.AddItemToPlayerInventory(gear);
                     __instance.ResetPickup();
                     InterpoLootMain.isEatingFromInspect = true;
                     __instance.UseInventoryItem(gear, false);
                     InterpoLootMain.isEatingFromInspect = false;
-                });
+                }, startPos, null, null, startRot);
                 
                 InterpoLootMain.isTakingItem = true;
                 __instance.ExitInspectGearMode(true);
@@ -557,21 +518,14 @@ namespace InterpoLoot
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
                 
-                GameObject clone = InterpoLootMain.CreateVisualClone(gear);
-                clone.transform.position = startPos;
-                clone.transform.rotation = startRot;
-                
-                gear.gameObject.SetActive(false);
-                
-                InterpoLootMain.StartQuickLootAnimation(clone, gear, () => {
-                    UnityEngine.Object.Destroy(clone);
-                    
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {
+                    gear.gameObject.SetActive(false);
                     __instance.AddItemToPlayerInventory(gear);
                     __instance.ResetPickup();
                     InterpoLootMain.isEatingFromInspect = true;
                     __instance.UseInventoryItem(gear, false);
                     InterpoLootMain.isEatingFromInspect = false;
-                });
+                }, startPos, null, null, startRot);
                 
                 InterpoLootMain.isTakingItem = true;
                 __instance.ExitInspectGearMode(true);
@@ -648,18 +602,11 @@ namespace InterpoLoot
                 Vector3 startPos = GetStoveOrRaycastPos(__instance);
                 UnityEngine.Quaternion startRot = gear.transform.rotation;
                 
-                GameObject clone = InterpoLootMain.CreateVisualClone(gear);
-                clone.transform.position = startPos;
-                clone.transform.rotation = startRot;
-                clone.transform.localScale = gear.transform.localScale;
-                
                 string prefabName = gear.name.Replace("(Clone)", "").Trim();
                 Il2Cpp.GearItem prefab = Il2Cpp.GearItem.LoadGearItemPrefab(prefabName);
                 Vector3 targetScale = prefab != null ? prefab.transform.localScale : gear.transform.localScale;
 
-                InterpoLootMain.StartQuickLootAnimation(clone, gear, () => {
-                    UnityEngine.Object.Destroy(clone);
-                }, startPos, clone.transform.localScale, targetScale);
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {}, startPos, gear.transform.localScale, targetScale, startRot);
                 
                 InterpoLootMain.isTakingItem = true;
             }
@@ -672,14 +619,7 @@ namespace InterpoLoot
                     Vector3 startPos = GetStoveOrRaycastPos(__instance);
                     UnityEngine.Quaternion startRot = __instance.transform.rotation;
                     
-                    GameObject clone = InterpoLootMain.CreateVisualClone(waterPrefab);
-                    clone.transform.position = startPos;
-                    clone.transform.rotation = startRot;
-                    clone.transform.localScale = waterPrefab.transform.localScale;
-                    
-                    InterpoLootMain.StartQuickLootAnimation(clone, null, () => {
-                        UnityEngine.Object.Destroy(clone);
-                    }, startPos);
+                    InterpoLootMain.StartQuickLootAnimation(waterPrefab.gameObject, null, null, startPos, waterPrefab.transform.localScale, null, startRot);
                     
                     InterpoLootMain.isTakingItem = true;
                 }
@@ -735,14 +675,7 @@ namespace InterpoLoot
                 Vector3 startPos = GetStoveOrRaycastPos(gi.m_CookingPotItem);
                 UnityEngine.Quaternion startRot = gi.transform.rotation;
                 
-                GameObject clone = InterpoLootMain.CreateVisualClone(gi);
-                clone.transform.position = startPos;
-                clone.transform.rotation = startRot;
-                clone.transform.localScale = gi.transform.localScale;
-                
-                InterpoLootMain.StartQuickLootAnimation(clone, gi, () => {
-                    UnityEngine.Object.Destroy(clone);
-                }, startPos);
+                InterpoLootMain.StartQuickLootAnimation(gi.gameObject, gi, () => {}, startPos, gi.transform.localScale, null, startRot);
                 
                 // We don't set isTakingItem here because AddItemToPlayerInventory is instantaneous.
             }
@@ -768,14 +701,7 @@ namespace InterpoLoot
             GearItem waterPrefab = Il2Cpp.GearItem.LoadGearItemPrefab("GEAR_Water500ml");
             if (waterPrefab != null)
             {
-                GameObject clone = InterpoLootMain.CreateVisualClone(waterPrefab);
-                clone.transform.position = startPos;
-                clone.transform.rotation = UnityEngine.Quaternion.identity;
-                clone.transform.localScale = waterPrefab.transform.localScale;
-                
-                InterpoLootMain.StartQuickLootAnimation(clone, null, () => {
-                    UnityEngine.Object.Destroy(clone);
-                }, startPos);
+                InterpoLootMain.StartQuickLootAnimation(waterPrefab.gameObject, null, null, startPos, waterPrefab.transform.localScale, null, UnityEngine.Quaternion.identity);
             }
         }
     }
@@ -888,18 +814,7 @@ namespace InterpoLoot
                     
                     if (prefab != null)
                     {
-                        var clone = InterpoLootMain.CreateVisualClone(prefab, "BedrollVisualClone");
-
-                        if (clone != null)
-                        {
-                            clone.transform.position = gearItem.transform.position;
-                            clone.transform.rotation = gearItem.transform.rotation;
-                            
-                            InterpoLootMain.StartQuickLootAnimation(clone, null, () =>
-                            {
-                                UnityEngine.Object.Destroy(clone);
-                            });
-                        }
+                        InterpoLootMain.StartQuickLootAnimation(prefab.gameObject, null, null, gearItem.transform.position, null, null, gearItem.transform.rotation);
                     }
                 }
             }

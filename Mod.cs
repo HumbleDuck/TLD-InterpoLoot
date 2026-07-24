@@ -40,7 +40,7 @@ namespace InterpoLoot
             Settings.OnLoad();
             Time.fixedDeltaTime = 1f / 60f;
             
-            // Nix item-on-item physics collisions! Holdover from InterpoLoot's origin as a physics mod.
+            // Nix item-on-item physics collisions! (Gear items)
             Physics.IgnoreLayerCollision((int)vp_Layer.Gear, (int)vp_Layer.Gear, true);
             
             MelonLogger.Msg("InterpoLoot has loaded!");
@@ -161,18 +161,19 @@ namespace InterpoLoot
             return false;
         }
 
-        public static GameObject CreateVisualClone(GearItem gearItem, string cloneName = "VisualClone")
+        public static GameObject CreateVisualClone(GameObject sourceObject, string cloneName = "VisualClone")
         {
+            if (sourceObject == null) return null;
             GameObject clone = new GameObject(cloneName);
             clone.layer = 0; // Default layer
             
-            clone.transform.position = gearItem.transform.position;
-            clone.transform.rotation = gearItem.transform.rotation;
-            clone.transform.localScale = gearItem.transform.localScale;
+            clone.transform.position = sourceObject.transform.position;
+            clone.transform.rotation = sourceObject.transform.rotation;
+            clone.transform.localScale = sourceObject.transform.localScale;
 
-            ClothingItem clothing = gearItem.GetComponent<ClothingItem>();
+            ClothingItem clothing = sourceObject.GetComponent<ClothingItem>();
             
-            foreach (MeshRenderer originalRenderer in gearItem.GetComponentsInChildren<MeshRenderer>(true))
+            foreach (MeshRenderer originalRenderer in sourceObject.GetComponentsInChildren<MeshRenderer>(true))
             {
                 if (clothing != null)
                 {
@@ -276,10 +277,10 @@ namespace InterpoLoot
             GameObject cloneObj;
             if (!string.IsNullOrEmpty(customPrefab)) {
                 var prefab = GearItem.LoadGearItemPrefab(customPrefab);
-                cloneObj = CreateVisualClone(prefab);
+                cloneObj = CreateVisualClone(prefab?.gameObject);
                 cloneObj.transform.localScale = Vector3.one; // Ensure correct scale for loaded prefab
             } else {
-                cloneObj = CreateVisualClone(gearItem);
+                cloneObj = CreateVisualClone(gearItem.gameObject);
             }
             
             cloneObj.transform.parent = null;
@@ -415,50 +416,54 @@ namespace InterpoLoot
             }
         }
 
-        public static void StartQuickLootAnimation(GameObject objToAnimate, GearItem originalGear = null, Action onComplete = null, Vector3? overrideStartPos = null, Vector3? startScale = null, Vector3? targetScale = null)
+        public static void StartQuickLootAnimation(GameObject sourceObject, GearItem originalGear = null, Action onComplete = null, Vector3? overrideStartPos = null, Vector3? startScale = null, Vector3? targetScale = null, UnityEngine.Quaternion? overrideStartRot = null)
         {
-            MelonCoroutines.Start(QuickLootCoroutine(objToAnimate, originalGear, onComplete, overrideStartPos, startScale, targetScale));
+            if (sourceObject == null) return;
+            MelonCoroutines.Start(QuickLootCoroutine(sourceObject, originalGear, onComplete, overrideStartPos, startScale, targetScale, overrideStartRot));
         }
 
-        private static IEnumerator QuickLootCoroutine(GameObject objToAnimate, GearItem originalGear, Action onComplete, Vector3? overrideStartPos, Vector3? startScale, Vector3? targetScale)
+        private static IEnumerator QuickLootCoroutine(GameObject sourceObject, GearItem originalGear, Action onComplete, Vector3? overrideStartPos, Vector3? startScale, Vector3? targetScale, UnityEngine.Quaternion? overrideStartRot)
         {
-            if (objToAnimate == null || interpolatingItems.Contains(objToAnimate)) yield break;
-            
-            interpolatingItems.Add(objToAnimate);
+            if (sourceObject == null || interpolatingItems.Contains(sourceObject)) yield break;
+            interpolatingItems.Add(sourceObject);
 
+            Vector3 startPos = overrideStartPos.HasValue ? overrideStartPos.Value : sourceObject.transform.position;
+            UnityEngine.Quaternion startRot = overrideStartRot.HasValue ? overrideStartRot.Value : sourceObject.transform.rotation;
+
+            // Spawn visual clone for interpolation BEFORE native logic modifies the object
+            GameObject cloneObj = CreateVisualClone(sourceObject);
+            if (cloneObj == null) 
+            {
+                interpolatingItems.Remove(sourceObject);
+                yield break;
+            }
+
+            // IMMEDIATELY run native logic / onComplete so it finishes without delay
+            if (onComplete != null)
+            {
+                onComplete();
+            }
+            else if (originalGear != null)
+            {
+                // Native pickup for loose items if no custom action provided
+                GameManager.GetPlayerManagerComponent().ProcessPickupItemInteraction(originalGear, false, false, false);
+                GameManager.GetPlayerManagerComponent().ResetPickup();
+            }
+            
             if (originalGear != null)
                 originalGear.PlayPickUpClip();
 
-            // Unparent from any inspect UI or container so world-space lerp works correctly
-            objToAnimate.transform.parent = null;
+            // Unparent so world-space lerp works correctly
+            cloneObj.transform.parent = null;
 
             // Force it to be active and visible in the world
-            objToAnimate.SetActive(true);
-            
-            if (originalGear != null && objToAnimate == originalGear.gameObject)
-            {
-                ClothingItem clothing = originalGear.GetComponent<ClothingItem>();
-                if (clothing != null)
-                {
-                    UnityEngine.Transform mesh = null;
-                    UnityEngine.Transform meshInspect = null;
-                    
-                    foreach (UnityEngine.Transform child in originalGear.gameObject.GetComponentsInChildren<UnityEngine.Transform>(true))
-                    {
-                        if (child.name == "Mesh") mesh = child;
-                        if (child.name == "MeshInspectMode") meshInspect = child;
-                    }
-                    
-                    if (meshInspect != null) meshInspect.gameObject.SetActive(false);
-                    if (mesh != null) mesh.gameObject.SetActive(true);
-                }
-            }
+            cloneObj.SetActive(true);
 
-            Vector3 localCenterOffset = GetCenterOffset(objToAnimate);
+            Vector3 localCenterOffset = GetCenterOffset(cloneObj);
 
-            Utils.SetObjectAndChildrenLayer(objToAnimate, 2, 0); // Layer 2 is Ignore Raycast, 0 preserves nothing
+            Utils.SetObjectAndChildrenLayer(cloneObj, 2, 0); // Layer 2 is Ignore Raycast, 0 preserves nothing
             
-            Renderer[] renderers = objToAnimate.GetComponentsInChildren<Renderer>(true);
+            Renderer[] renderers = cloneObj.GetComponentsInChildren<Renderer>(true);
             foreach (Renderer r in renderers)
             {
                 r.enabled = true;
@@ -474,25 +479,18 @@ namespace InterpoLoot
                 }
             }
 
-            // Disable its collider and physics so it doesn't interact while flying
-            if (objToAnimate.GetComponent<Rigidbody>() != null)
-                objToAnimate.GetComponent<Rigidbody>().isKinematic = true;
-            if (objToAnimate.GetComponent<Collider>() != null)
-                objToAnimate.GetComponent<Collider>().enabled = false;
-
             float duration = 0.5f;
             float time = 0f;
             
-            Vector3 initialWorldOffset = objToAnimate.transform.TransformVector(localCenterOffset);
-            Vector3 startPos = overrideStartPos.HasValue ? overrideStartPos.Value : objToAnimate.transform.position;
-            startPos -= initialWorldOffset; // Offset the root so the visual mesh spawns exactly at the original position
+            cloneObj.transform.position = startPos;
+            cloneObj.transform.rotation = startRot;
 
             Transform cameraTransform = GameManager.GetMainCamera().transform;
             
             // Calculate dynamic pocket offset based on max mesh bounds to prevent large items from clipping the camera
             Bounds bounds = new Bounds(Vector3.zero, Vector3.zero);
             bool hasBounds = false;
-            foreach (MeshRenderer m in objToAnimate.GetComponentsInChildren<MeshRenderer>(true))
+            foreach (MeshRenderer m in cloneObj.GetComponentsInChildren<MeshRenderer>(true))
             {
                 if (!hasBounds) { bounds = m.bounds; hasBounds = true; }
                 else { bounds.Encapsulate(m.bounds); }
@@ -502,7 +500,7 @@ namespace InterpoLoot
 
             while (time < duration)
             {
-                if (objToAnimate == null) yield break;
+                if (cloneObj == null) yield break;
                 time += Time.deltaTime;
                 float t = time / duration;
                 
@@ -513,50 +511,37 @@ namespace InterpoLoot
                 Vector3 targetPos = GetPocketPosition();
                 targetPos += cameraTransform.up * -dynamicOffset;
                 
-                Vector3 worldOffset = objToAnimate.transform.TransformVector(localCenterOffset);
+                Vector3 worldOffset = cloneObj.transform.TransformVector(localCenterOffset);
                 Vector3 adjustedTargetPos = targetPos - worldOffset;
                 
-                Vector3 currentPos = Vector3.Lerp(startPos, adjustedTargetPos, t);
+                // Adjust startPos by initial world offset as well so it stays anchored correctly
+                Vector3 initialWorldOffset = cloneObj.transform.TransformVector(localCenterOffset); // Approximation since rotation changes
+                Vector3 adjustedStartPos = startPos - initialWorldOffset;
+                
+                Vector3 currentPos = Vector3.Lerp(adjustedStartPos, adjustedTargetPos, t);
                 
                 // Add a very subtle downward arc to prevent clipping without looking too exaggerated
                 float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
                 currentPos += -cameraTransform.up * arc;
                 
-                objToAnimate.transform.position = currentPos;
+                cloneObj.transform.position = currentPos;
                 
                 if (startScale.HasValue && targetScale.HasValue)
                 {
-                    objToAnimate.transform.localScale = Vector3.Lerp(startScale.Value, targetScale.Value, t);
+                    cloneObj.transform.localScale = Vector3.Lerp(startScale.Value, targetScale.Value, t);
+                }
+                else if (startScale.HasValue && !targetScale.HasValue)
+                {
+                    cloneObj.transform.localScale = startScale.Value;
                 }
 
                 yield return null;
             }
             
-            if (objToAnimate != null && targetScale.HasValue)
-            {
-                objToAnimate.transform.localScale = targetScale.Value;
-            }
-
-            // Re-enable all colliders before adding to inventory so they are interactable when dropped
-            Collider[] allColliders = objToAnimate.GetComponentsInChildren<Collider>(true);
-            foreach (Collider c in allColliders) c.enabled = true;
-
-            if (onComplete != null)
-            {
-                onComplete();
-            }
-            else
-            {
-                // Finally, add to inventory silently
-                if (originalGear != null)
-                {
-                    GameManager.GetPlayerManagerComponent().AddItemToPlayerInventory(originalGear);
-                    GameManager.GetPlayerManagerComponent().ResetPickup();
-                    originalGear.gameObject.SetActive(false);
-                }
-            }
+            // Destroy clone
+            UnityEngine.Object.Destroy(cloneObj);
             
-            interpolatingItems.Remove(objToAnimate);
+            interpolatingItems.Remove(sourceObject);
         }
         public static void StartInspectLerpCoroutine(GearItem gearItem, Vector3 startPos)
         {
@@ -614,7 +599,7 @@ namespace InterpoLoot
             UnityEngine.Quaternion startRot = originalObj.transform.rotation;
 
             GearItem gear = originalObj.GetComponent<GearItem>();
-            GameObject clone = CreateVisualClone(gear, "PlacementVisualClone");
+            GameObject clone = CreateVisualClone(gear != null ? gear.gameObject : originalObj, "PlacementVisualClone");
             clone.transform.position = startPos;
             clone.transform.rotation = finalRot;
             clone.SetActive(true);
@@ -700,18 +685,11 @@ namespace InterpoLoot
         {
             if (yieldPrefab == null) return;
             
-            GameObject clone = CreateVisualClone(yieldPrefab, "YieldVisualClone");
-            clone.transform.position = spawnPos;
-            clone.transform.rotation = UnityEngine.Quaternion.identity;
-            clone.SetActive(true);
-            
             // Pass null for originalGear because the real item was already silently added to the inventory
             // But we need to play the audio manually!
             yieldPrefab.PlayPickUpClip();
 
-            MelonCoroutines.Start(QuickLootCoroutine(clone, null, () => {
-                UnityEngine.Object.Destroy(clone);
-            }, spawnPos, clone.transform.localScale, clone.transform.localScale));
+            StartQuickLootAnimation(yieldPrefab.gameObject, null, () => {}, spawnPos, yieldPrefab.transform.localScale, yieldPrefab.transform.localScale, UnityEngine.Quaternion.identity);
         }
 
         public static void AnimateItemToFire(GearItem gearItem, Vector3 targetPos)
@@ -724,7 +702,7 @@ namespace InterpoLoot
 
             string prefabName = gearItem.name.Replace("(Clone)", "").Trim();
             GearItem prefab = GearItem.LoadGearItemPrefab(prefabName);
-            GameObject clone = CreateVisualClone(prefab != null ? prefab : gearItem, "FuelVisualClone");
+            GameObject clone = CreateVisualClone(prefab != null ? prefab.gameObject : gearItem.gameObject, "FuelVisualClone");
             
             clone.transform.localScale = Vector3.one;
             clone.transform.position = startPos;
