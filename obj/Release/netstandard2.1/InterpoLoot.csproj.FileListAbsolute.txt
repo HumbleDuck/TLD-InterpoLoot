@@ -1,0 +1,10 @@
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\obj\Release\netstandard2.1\InterpoLoot.csproj.AssemblyReference.cache
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\obj\Release\netstandard2.1\InterpoLoot.GeneratedMSBuildEditorConfig.editorconfig
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\obj\Release\netstandard2.1\InterpoLoot.AssemblyInfoInputs.cache
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\obj\Release\netstandard2.1\InterpoLoot.AssemblyInfo.cs
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\obj\Release\netstandard2.1\InterpoLoot.csproj.CoreCompileInputs.cache
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\bin\Release\netstandard2.1\InterpoLoot.deps.json
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\bin\Release\netstandard2.1\InterpoLoot.dll
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\bin\Release\netstandard2.1\InterpoLoot.pdb
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\obj\Release\netstandard2.1\InterpoLoot.dll
+C:\Program Files (x86)\Steam\steamapps\common\TheLongDark\InterpoLoot\obj\Release\netstandard2.1\InterpoLoot.pdb
