@@ -43,83 +43,9 @@ namespace InterpoLoot
             // Nix item-on-item physics collisions! (Gear items)
             Physics.IgnoreLayerCollision((int)vp_Layer.Gear, (int)vp_Layer.Gear, true);
             
-            ApplyPlacingAnywhereFix();
-            
             MelonLogger.Msg("InterpoLoot has loaded!");
         }
 
-        private void ApplyPlacingAnywhereFix()
-        {
-            var paAssembly = System.AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "PlacingAnywhere");
-            if (paAssembly != null)
-            {
-                var refCacheType = paAssembly.GetType("PlacingAnywhere.ReferenceCache");
-                if (refCacheType != null)
-                {
-                    var initializeMethod = refCacheType.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Instance);
-                    var prefixMethod = typeof(InterpoLootMain).GetMethod(nameof(PlacingAnywhere_ReferenceCache_Initialize_Prefix), BindingFlags.NonPublic | BindingFlags.Static);
-                    if (initializeMethod != null && prefixMethod != null)
-                    {
-                        HarmonyInstance.Patch(initializeMethod, new HarmonyLib.HarmonyMethod(prefixMethod));
-                        MelonLogger.Msg("Applied dynamic fix for PlacingAnywhere ReferenceCache NRE bug.");
-                    }
-                }
-            }
-        }
-
-        private static void PlacingAnywhere_ReferenceCache_Initialize_Prefix(Component __instance)
-        {
-            try
-            {
-                var type = __instance.GetType();
-                var gearItem = __instance.gameObject.GetComponent<GearItem>();
-                if (gearItem == null) return;
-                
-                var meshFilter = __instance.gameObject.GetComponentInChildren<MeshFilter>();
-                if (meshFilter != null && meshFilter.sharedMesh == null)
-                {
-                    meshFilter.sharedMesh = new Mesh(); // Prevent PlacingAnywhere from crashing on .vertices
-                }
-                
-                var paAssembly = type.Assembly;
-                var mainType = paAssembly.GetType("PlacingAnywhere.PlacingAnywhereMain");
-                if (mainType == null) return;
-                
-                var sanitizeMethod = mainType.GetMethod("SanitizeGameObjectName", BindingFlags.Public | BindingFlags.Static);
-                if (sanitizeMethod == null) return;
-                
-                string sanitizedName = (string)sanitizeMethod.Invoke(null, new object[] { gearItem.name });
-                
-                var meshCacheManagerType = paAssembly.GetType("PlacingAnywhere.MeshCacheManager");
-                if (meshCacheManagerType == null) return;
-                
-                var cacheObjectsField = meshCacheManagerType.GetField("cacheObjects", BindingFlags.Public | BindingFlags.Static);
-                var cacheMeshesField = meshCacheManagerType.GetField("cacheMeshes", BindingFlags.Public | BindingFlags.Static);
-                
-                if (cacheObjectsField == null || cacheMeshesField == null) return;
-                
-                var cacheObjects = (System.Collections.Generic.Dictionary<string, GameObject>)cacheObjectsField.GetValue(null);
-                var cacheMeshes = (System.Collections.Generic.Dictionary<string, Mesh>)cacheMeshesField.GetValue(null);
-                
-                if (cacheObjects.ContainsKey(sanitizedName) && !cacheMeshes.ContainsKey(sanitizedName))
-                {
-                    var cacheObject = cacheObjects[sanitizedName];
-                    if (cacheObject != null)
-                    {
-                        var cacheMeshFilter = cacheObject.GetComponent<MeshFilter>();
-                        var cacheMeshFilterField = type.GetField("cacheMeshFilter", BindingFlags.Public | BindingFlags.Instance);
-                        if (cacheMeshFilterField != null)
-                        {
-                            cacheMeshFilterField.SetValue(__instance, cacheMeshFilter);
-                        }
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                MelonLogger.Error($"Error in PlacingAnywhere_ReferenceCache_Initialize_Prefix: {ex}");
-            }
-        }
 
         public override void OnUpdate()
         {
