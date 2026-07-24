@@ -2,8 +2,11 @@
 A Quality-of-Life mod for The Long Dark that replaces the standard "click and disappear" looting system with smooth interpolation animations. Items now seamlessly float from the world directly into your body/inventory!
 
 ## Features
-- "QuickLoot" System: Bypass the vanilla popup inspection menu for a faster, smoother looting experience when picking up loose items in the world.
+- "QuickLoot" System: Bypass the vanilla popup inspection menu for a faster, smoother looting experience when picking up loose items in the world. Perfect for pack-rats!
 - Item Interpolation: Instead of items instantly teleporting into your inventory, they smoothly animate into you.
+- Food/Drink Interpolation: When consuming food/drink from the inventory or radial menu, the item will animate out in front of you with a "pat" sound and then animate back into you to be consumed (you can turn this off).
+- Fuel Interpolation: Fuel you've fed into the fire will also animate into the fire!
+- Harvestable/Breakable Interpolation: Breaking down furniture, chopping firewood, hewing saplings, foraging for rose hips and reishi, etc all wrap up with an animation and "pat" sound
 - Customizable:
   - Prefer the vanilla inspection UI for every click? Enable the `Always Use Vanilla Inspection Popup UI` in Mod Settings to keep the vanilla popup, but retain the new interpolation animation.
   - Disable the new consumption animation if you prefer the instant vanilla experience for eating and drinking from your inventory or radial menu.
