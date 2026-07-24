@@ -40,7 +40,7 @@ namespace InterpoLoot
             Settings.OnLoad();
             Time.fixedDeltaTime = 1f / 60f;
             
-            // Nix item-on-item physics collisions! (Gear items)
+            // Nix item-on-item physics collisions! Holdover from InterpoLoot's origin as a physics mod.
             Physics.IgnoreLayerCollision((int)vp_Layer.Gear, (int)vp_Layer.Gear, true);
             
             MelonLogger.Msg("InterpoLoot has loaded!");
