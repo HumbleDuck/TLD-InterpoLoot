@@ -225,7 +225,17 @@ namespace InterpoLoot
                     harvestPos = cam.position + cam.forward * 1.5f;
                 }
             }
-            InterpoLootMain.lastInspectedItemOriginalPosition = harvestPos;
+            
+            // We place the item at the player's feet, which simulates the vanilla behavior 
+            // for dropping an item from the inventory.
+            if (GameManager.GetPlayerObject() != null)
+            {
+                InterpoLootMain.lastInspectedItemOriginalPosition = GameManager.GetPlayerObject().transform.position + Vector3.up * 0.1f;
+            }
+            else
+            {
+                InterpoLootMain.lastInspectedItemOriginalPosition = harvestPos; // Fallback
+            }
         }
 
         private static void Postfix(PlayerManager __instance, GearItem __0)
@@ -373,7 +383,6 @@ namespace InterpoLoot
                 if (InterpoLootMain.lastCrosshairHitPosition != UnityEngine.Vector3.zero)
                 {
                     InterpoLootMain.lastInspectedItemOriginalPosition = InterpoLootMain.lastCrosshairHitPosition;
-                    InterpoLootMain.lastInspectedItemOriginalRotation = UnityEngine.Quaternion.identity;
                 }
                 else
                 {
@@ -382,14 +391,18 @@ namespace InterpoLoot
                     if (UnityEngine.Physics.Raycast(cam.position, cam.forward, out hit, 10f))
                     {
                         InterpoLootMain.lastInspectedItemOriginalPosition = hit.point;
-                        InterpoLootMain.lastInspectedItemOriginalRotation = UnityEngine.Quaternion.identity;
                     }
                     else
                     {
                         InterpoLootMain.lastInspectedItemOriginalPosition = h.transform.position;
-                        InterpoLootMain.lastInspectedItemOriginalRotation = h.transform.rotation;
                     }
                 }
+                InterpoLootMain.lastInspectedItemOriginalRotation = UnityEngine.Quaternion.identity;
+                InterpoLootMain.isInspectingHarvestable = true;
+            }
+            else
+            {
+                InterpoLootMain.isInspectingHarvestable = false;
             }
         }
     }
@@ -397,16 +410,25 @@ namespace InterpoLoot
     [HarmonyPatch(typeof(PlayerManager), nameof(PlayerManager.ExitInspectGearMode))]
     internal class PlayerManager_ExitInspectGearMode_Patch
     {
-        private static void Postfix(PlayerManager __instance)
+        private static void Prefix(PlayerManager __instance, out GearItem __state)
         {
-            GearItem gear = __instance.GearItemBeingInspected();
+            try { __state = __instance.GearItemBeingInspected(); } catch { __state = null; }
+        }
+
+        private static Exception Finalizer(PlayerManager __instance, GearItem __state, Exception __exception)
+        {
+            GearItem gear = __state;
+
 
             
             // If vanilla failed to clean up and restore the item (which happens if it returns early or gets stuck)
+            // Note: For harvestables, vanilla intentionally leaves them active (dropped), but we still need to flush the stuck fields.
             if (gear != null && gear.gameObject.activeInHierarchy)
             {
-
-                InterpoLootMain.isBuggedVanillaInspect = true;
+                if (!InterpoLootMain.isInspectingHarvestable)
+                {
+                    InterpoLootMain.isBuggedVanillaInspect = true;
+                }
                 
                 // FORCE CLEAR the stuck fields using Reflection!
                 try
@@ -421,12 +443,35 @@ namespace InterpoLoot
                         if (coroutine != null)
                         {
                             __instance.StopCoroutine((UnityEngine.Coroutine)coroutine);
+                            routineProp.SetValue(__instance, null);
                         }
-                        routineProp.SetValue(__instance, null);
                     }
                     
-                    // Search for ANY property in PlayerManager that still points to our gear item!
-                    foreach (var prop in typeof(PlayerManager).GetProperties(flags))
+                    // Clear the inspected item fields
+                    var fields = typeof(PlayerManager).GetFields(flags);
+                    foreach (var prop in fields)
+                    {
+                        if (prop.FieldType == typeof(GearItem))
+                        {
+                            var val = prop.GetValue(__instance) as GearItem;
+                            if (val != null && val == gear)
+                            {
+                                prop.SetValue(__instance, null);
+                            }
+                        }
+                        else if (prop.FieldType == typeof(UnityEngine.GameObject))
+                        {
+                            var val = prop.GetValue(__instance) as UnityEngine.GameObject;
+                            if (val != null && val == gear.gameObject)
+                            {
+                                prop.SetValue(__instance, null);
+                            }
+                        }
+                    }
+
+                    // Clear the inspected item properties
+                    var properties = typeof(PlayerManager).GetProperties(flags);
+                    foreach (var prop in properties)
                     {
                         if (!prop.CanRead || !prop.CanWrite) continue;
                         
@@ -435,7 +480,6 @@ namespace InterpoLoot
                             var val = prop.GetValue(__instance) as GearItem;
                             if (val != null && val == gear)
                             {
-
                                 prop.SetValue(__instance, null);
                             }
                         }
@@ -444,13 +488,10 @@ namespace InterpoLoot
                             var val = prop.GetValue(__instance) as UnityEngine.GameObject;
                             if (val != null && val == gear.gameObject)
                             {
-
                                 prop.SetValue(__instance, null);
                             }
                         }
                     }
-                    
-
                 }
                 catch (System.Exception ex)
                 {
@@ -458,24 +499,28 @@ namespace InterpoLoot
                 }
 
                 // Force it back to its original world position if it's a loose item
-                if (InterpoLootMain.lastInspectedItemOriginalPosition != Vector3.zero)
+                if (!InterpoLootMain.isInspectingHarvestable)
                 {
-                    gear.transform.position = InterpoLootMain.lastInspectedItemOriginalPosition;
-                    gear.transform.rotation = InterpoLootMain.lastInspectedItemOriginalRotation;
-                    gear.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
-                }
+                    if (InterpoLootMain.lastInspectedItemOriginalPosition != Vector3.zero)
+                    {
+                        gear.transform.position = InterpoLootMain.lastInspectedItemOriginalPosition;
+                        gear.transform.rotation = InterpoLootMain.lastInspectedItemOriginalRotation;
+                        gear.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
+                    }
 
-                // Force colliders back on
-                foreach (Collider col in gear.GetComponentsInChildren<Collider>())
-                {
-                    col.enabled = true;
-                }
+                    // Force colliders back on
+                    foreach (Collider col in gear.GetComponentsInChildren<Collider>())
+                    {
+                        col.enabled = true;
+                    }
 
-                // Reset layer to Interactive (17)
-                gear.gameObject.layer = 17;
+                    // Reset layer to Interactive (17)
+                    gear.gameObject.layer = 17;
+                }
             }
 
             InterpoLootMain.inspectingContainerItem = false;
+            return __exception;
         }
     }
 

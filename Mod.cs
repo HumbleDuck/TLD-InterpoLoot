@@ -16,6 +16,7 @@ namespace InterpoLoot
         public static bool isTakingItem = false;
         public static bool isEatingFromCookingSlot = false;
         public static bool isAnimatingPlacement = false;
+        public static bool isInspectingHarvestable = false;
         public static float vanillaInteractRange = 2f;
         public static HashSet<GameObject> interpolatingItems = new HashSet<GameObject>();
         public static UnityEngine.Vector3 lastInspectedItemOriginalPosition = UnityEngine.Vector3.zero;
@@ -24,6 +25,7 @@ namespace InterpoLoot
         public static UnityEngine.Vector3 lastCrosshairHitPosition = UnityEngine.Vector3.zero;
         public static bool isPlacementModeActive = false;
         public static bool inspectingContainerItem = false;
+        public static bool isBuggedVanillaInspect = false;
 
         public static Vector3 PocketOffset = new Vector3(0f, -0.2f, -0.4f);
 
@@ -195,6 +197,7 @@ namespace InterpoLoot
                     
                     MeshRenderer mr = child.AddComponent<MeshRenderer>();
                     mr.sharedMaterials = originalRenderer.sharedMaterials;
+                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     
                     if (clothing != null && (originalRenderer.name == "Mesh" || (originalRenderer.transform.parent != null && originalRenderer.transform.parent.name == "Mesh")))
                     {
@@ -762,6 +765,5 @@ namespace InterpoLoot
                 UnityEngine.Object.Destroy(clone);
             }
         }
-        public static bool isBuggedVanillaInspect = false;
     }
 }
