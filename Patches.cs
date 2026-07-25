@@ -163,6 +163,8 @@ namespace InterpoLoot
     {
         private static bool Prefix(PlayerManager __instance)
         {
+            if (InterpoLootMain.isInspectingCookingPot) return true;
+
             GearItem gear = __instance.GearItemBeingInspected();
 
             if (gear != null)
@@ -347,8 +349,9 @@ namespace InterpoLoot
         private static void Prefix(GearItem gear, Container c, IceFishingHole hole, Harvestable h, CookingPotItem pot)
         {
             InterpoLootMain.isBuggedVanillaInspect = false;
+            InterpoLootMain.isInspectingCookingPot = (pot != null);
             
-
+            if (pot != null) return;
 
             if (gear != null)
             {
@@ -499,7 +502,7 @@ namespace InterpoLoot
                 }
 
                 // Force it back to its original world position if it's a loose item
-                if (!InterpoLootMain.isInspectingHarvestable)
+                if (!InterpoLootMain.isInspectingHarvestable && !InterpoLootMain.isInspectingCookingPot)
                 {
                     if (InterpoLootMain.lastInspectedItemOriginalPosition != Vector3.zero)
                     {
@@ -507,16 +510,25 @@ namespace InterpoLoot
                         gear.transform.rotation = InterpoLootMain.lastInspectedItemOriginalRotation;
                         gear.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
                     }
+                }
 
-                    // Force colliders back on
+                // Force colliders back on
+                if (!InterpoLootMain.isInspectingCookingPot)
+                {
                     foreach (Collider col in gear.GetComponentsInChildren<Collider>())
                     {
                         col.enabled = true;
                     }
-
-                    // Reset layer to Interactive (17)
-                    gear.gameObject.layer = 17;
                 }
+                else
+                {
+                    // For cooking pots, indiscriminately enabling child colliders breaks the liquid/snow meshes!
+                    // We only want to ensure the main collider is enabled.
+                    Collider mainCol = gear.GetComponent<Collider>();
+                    if (mainCol != null) mainCol.enabled = true;
+                }
+
+                gear.gameObject.layer = 17;
             }
 
             InterpoLootMain.inspectingContainerItem = false;
@@ -532,13 +544,19 @@ namespace InterpoLoot
             GearItem gear = __instance.GearItemBeingInspected();
             if (gear != null)
             {
+                var pot = gear.GetComponent<Il2Cpp.CookingPotItem>();
+                if (pot == null) pot = gear.GetComponentInParent<Il2Cpp.CookingPotItem>();
+
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
                 
                 InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {
                     gear.gameObject.SetActive(false);
-                    __instance.AddItemToPlayerInventory(gear);
+                    InterpoLootMain.isTakingItem = true;
+                    __instance.ProcessPickupItemInteraction(gear, false, false, false);
                     __instance.ResetPickup();
+                    InterpoLootMain.isTakingItem = false;
+                    
                     InterpoLootMain.isEatingFromInspect = true;
                     __instance.UseInventoryItem(gear, false);
                     InterpoLootMain.isEatingFromInspect = false;
@@ -560,15 +578,44 @@ namespace InterpoLoot
             GearItem gear = __instance.GearItemBeingInspected();
             if (gear != null)
             {
+                var pot = gear.GetComponent<Il2Cpp.CookingPotItem>();
+                if (pot == null) pot = gear.GetComponentInParent<Il2Cpp.CookingPotItem>();
+                if (pot != null && (pot.m_GearPlacePointAttachedTo != null || pot.m_FireBeingUsed != null))
+                {
+                    return true; // Let vanilla handle 'Pass Time' for snow/water on stoves
+                }
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
                 
                 InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {
                     gear.gameObject.SetActive(false);
-                    __instance.AddItemToPlayerInventory(gear);
+                    InterpoLootMain.isTakingItem = true;
+                    __instance.ProcessPickupItemInteraction(gear, false, false, false);
                     __instance.ResetPickup();
+                    InterpoLootMain.isTakingItem = false;
+                    
                     InterpoLootMain.isEatingFromInspect = true;
-                    __instance.UseInventoryItem(gear, false);
+                    if (gear.m_WaterSupply != null)
+                    {
+                        var method = typeof(PlayerManager).GetMethod("DrinkFromWaterSupply", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (method != null)
+                        {
+                            var parameters = method.GetParameters();
+                            if (parameters.Length == 1)
+                                method.Invoke(__instance, new object[] { gear.m_WaterSupply });
+                            else if (parameters.Length == 2)
+                            {
+                                // Pass null or default for the second parameter (volumeAvailable)
+                                var secondParamType = parameters[1].ParameterType;
+                                object defaultVal = secondParamType.IsValueType ? System.Activator.CreateInstance(secondParamType) : null;
+                                method.Invoke(__instance, new object[] { gear.m_WaterSupply, defaultVal });
+                            }
+                        }
+                    }
+                    else
+                    {
+                        __instance.UseInventoryItem(gear, false);
+                    }
                     InterpoLootMain.isEatingFromInspect = false;
                 }, startPos, null, null, startRot);
                 

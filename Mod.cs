@@ -17,6 +17,7 @@ namespace InterpoLoot
         public static bool isEatingFromCookingSlot = false;
         public static bool isAnimatingPlacement = false;
         public static bool isInspectingHarvestable = false;
+        public static bool isInspectingCookingPot = false;
         public static float vanillaInteractRange = 2f;
         public static HashSet<GameObject> interpolatingItems = new HashSet<GameObject>();
         public static UnityEngine.Vector3 lastInspectedItemOriginalPosition = UnityEngine.Vector3.zero;
@@ -198,6 +199,7 @@ namespace InterpoLoot
                     MeshRenderer mr = child.AddComponent<MeshRenderer>();
                     mr.sharedMaterials = originalRenderer.sharedMaterials;
                     mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    mr.enabled = originalRenderer.enabled;
                     
                     if (clothing != null && (originalRenderer.name == "Mesh" || (originalRenderer.transform.parent != null && originalRenderer.transform.parent.name == "Mesh")))
                     {
@@ -205,7 +207,18 @@ namespace InterpoLoot
                     }
                     else
                     {
-                        child.SetActive(originalRenderer.gameObject.activeSelf);
+                        bool isActuallyActive = true;
+                        Transform curr = originalRenderer.transform;
+                        while (curr != null && curr != sourceObject.transform.parent)
+                        {
+                            if (!curr.gameObject.activeSelf)
+                            {
+                                isActuallyActive = false;
+                                break;
+                            }
+                            curr = curr.parent;
+                        }
+                        child.SetActive(isActuallyActive);
                     }
                     
                     child.layer = 0;
@@ -319,7 +332,7 @@ namespace InterpoLoot
             float duration = 0.35f;
             float time = 0f;
             bool playedAudio = false;
-            cloneObj.transform.rotation = UnityEngine.Quaternion.LookRotation(cameraTransform.position - midPos); 
+            cloneObj.transform.rotation = UnityEngine.Quaternion.LookRotation(cameraTransform.position - midPos) * UnityEngine.Quaternion.Euler(0, -90, 0); 
 
             // Calculate centerOffset BEFORE destroying colliders
             Vector3 localCenterOffset = GetCenterOffset(cloneObj);
