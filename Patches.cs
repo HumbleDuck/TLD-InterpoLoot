@@ -2,6 +2,7 @@ using HarmonyLib;
 using Il2Cpp;
 using Il2CppTLD.Gear;
 using UnityEngine;
+using System;
 
 namespace InterpoLoot
 {
@@ -17,7 +18,7 @@ namespace InterpoLoot
 
             GearItem gearItem = crosshairObj.GetComponent<GearItem>();
             if (gearItem == null) gearItem = crosshairObj.GetComponentInParent<GearItem>();
-            
+
             if (gearItem != null)
             {
                 var pot = gearItem.GetComponent<Il2Cpp.CookingPotItem>();
@@ -27,7 +28,7 @@ namespace InterpoLoot
                 {
                     return true; // Let vanilla handle cooking interactions
                 }
-                
+
                 if (InterpoLootMain.ShouldLetVanillaHandleInteraction(gearItem))
                 {
                     return true; // Let vanilla equip lit light sources immediately
@@ -36,7 +37,7 @@ namespace InterpoLoot
                 // We handle all interaction logic (Quick Loot, Inspect, Drag) in InterpoLootMain.OnUpdate
                 // Block the vanilla interaction so it doesn't conflict
                 __result = false;
-                return false; 
+                return false;
             }
 
             return true;
@@ -89,7 +90,7 @@ namespace InterpoLoot
     {
         private static void Prefix(float __0)
         {
-            if (__0 != InterpoLootMain.vanillaInteractRange && __0 < 10f) 
+            if (__0 != InterpoLootMain.vanillaInteractRange && __0 < 10f)
             {
                 InterpoLootMain.vanillaInteractRange = __0;
             }
@@ -109,7 +110,7 @@ namespace InterpoLoot
             if (!isNormal || isOverlay)
             {
                 // FREEZE tracking if in a UI or not normal.
-                return; 
+                return;
             }
 
             if (__result == null)
@@ -148,7 +149,7 @@ namespace InterpoLoot
                         InterpoLootMain.lastInspectedItemOriginalRotation = hitGear.transform.rotation;
                     }
                 }
-                
+
                 if (Vector3.Distance(__instance.m_LocationOfLastInteractHit, InterpoLootMain.lastCrosshairHitPosition) > 0.01f)
                 {
 
@@ -172,9 +173,9 @@ namespace InterpoLoot
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
 
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
-                
-                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {}, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
-                
+
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => { }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
+
                 InterpoLootMain.isTakingItem = true;
             }
             return true; // Let vanilla handle inventory insertion and harvest queue
@@ -196,8 +197,8 @@ namespace InterpoLoot
             {
                 UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition + (camFwd * 0.5f);
-                
-                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {}, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, gear.transform.rotation);
+
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => { }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, gear.transform.rotation);
             }
             return true; // Let vanilla handle container removal
         }
@@ -227,7 +228,7 @@ namespace InterpoLoot
                     harvestPos = cam.position + cam.forward * 1.5f;
                 }
             }
-            
+
             // We place the item at the player's feet, which simulates the vanilla behavior 
             // for dropping an item from the inventory.
             if (GameManager.GetPlayerObject() != null)
@@ -280,12 +281,28 @@ namespace InterpoLoot
             {
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
-                
+
                 InterpoLootMain.StartQuickLootAnimation(__0.gameObject, __0, () => {
-                    __0.gameObject.SetActive(false);
+                    Vector3 origScale = __0.transform.localScale;
+                    __0.transform.localScale = Vector3.zero;
+
+                    // Fix: If it's a cooking pot item (like an open can of beans) that is physically attached to a stove, 
+                    // UseInventoryItem will get confused if called 0.5s later because the Cooking UI was closed.
+                    // Instead, we manually pop it into the player's inventory right before eating it!
+                    if (__0.m_CookingPotItem != null && __0.m_CookingPotItem.m_GearPlacePointAttachedTo != null)
+                    {
+                        InterpoLootMain.isTakingItem = true;
+                        __instance.ProcessPickupItemInteraction(__0, false, false, false);
+                        __instance.ResetPickup();
+                        InterpoLootMain.isTakingItem = false;
+                    }
+
                     InterpoLootMain.isEatingFromInspect = true;
                     __instance.UseInventoryItem(__0, false);
                     InterpoLootMain.isEatingFromInspect = false;
+
+                    // Restore the scale just in case it survives as an inventory item (partial consumption)!
+                    if (__0 != null) __0.transform.localScale = origScale;
                 }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
                 return false;
             }
@@ -303,12 +320,12 @@ namespace InterpoLoot
             if (InterpoLootMain.isSimulatingRadialConsumption || InterpoLootMain.isEatingFromInspect || __0 == null) return true;
             if (InterpoLootMain.inspectingContainerItem) return true;
             if (InterpoLootMain.ShouldSkipRadialInterpolationDueToCollision()) return true;
-            
+
             if (GameManager.GetThirstComponent().m_CurrentThirst <= 0.001f)
                 return true;
-            
+
             if (Settings.options.VanillaInventoryConsumption) return true;
-            
+
             GearItem gearItem = __0.GetComponent<GearItem>();
             if (gearItem != null)
             {
@@ -323,12 +340,24 @@ namespace InterpoLoot
                 {
                     Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                     UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
-                    
+
                     InterpoLootMain.StartQuickLootAnimation(gearItem.gameObject, gearItem, () => {
-                        gearItem.gameObject.SetActive(false);
+                        Vector3 origScale = gearItem.transform.localScale;
+                        gearItem.transform.localScale = Vector3.zero;
+
+                        if (gearItem.m_CookingPotItem != null && gearItem.m_CookingPotItem.m_GearPlacePointAttachedTo != null)
+                        {
+                            InterpoLootMain.isTakingItem = true;
+                            __instance.ProcessPickupItemInteraction(gearItem, false, false, false);
+                            __instance.ResetPickup();
+                            InterpoLootMain.isTakingItem = false;
+                        }
+
                         InterpoLootMain.isEatingFromInspect = true;
                         __instance.UseInventoryItem(gearItem, false);
                         InterpoLootMain.isEatingFromInspect = false;
+
+                        if (gearItem != null) gearItem.transform.localScale = origScale;
                     }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
                     return false;
                 }
@@ -350,16 +379,16 @@ namespace InterpoLoot
         {
             InterpoLootMain.isBuggedVanillaInspect = false;
             InterpoLootMain.isInspectingCookingPot = (pot != null);
-            
+
             if (pot != null) return;
 
             if (gear != null)
             {
                 InterpoLootMain.lastInspectedItemOriginalScale = gear.transform.localScale;
 
-                
+
                 // Lock in the absolute world position of a loose item before the engine moves it to the camera!
-                if (c == null && h == null) 
+                if (c == null && h == null)
                 {
                     InterpoLootMain.lastInspectedItemOriginalPosition = gear.transform.position;
                     InterpoLootMain.lastInspectedItemOriginalRotation = gear.transform.rotation;
@@ -423,7 +452,7 @@ namespace InterpoLoot
             GearItem gear = __state;
 
 
-            
+
             // If vanilla failed to clean up and restore the item (which happens if it returns early or gets stuck)
             // Note: For harvestables, vanilla intentionally leaves them active (dropped), but we still need to flush the stuck fields.
             if (gear != null && gear.gameObject.activeInHierarchy)
@@ -432,15 +461,15 @@ namespace InterpoLoot
                 {
                     InterpoLootMain.isBuggedVanillaInspect = true;
                 }
-                
+
                 // FORCE CLEAR the stuck fields using Reflection!
                 try
                 {
                     var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public;
-                    
+
                     // Stop the coroutine (if exposed as property)
                     var routineProp = typeof(PlayerManager).GetProperty("m_InspectModeActiveCoroutine", flags);
-                    if (routineProp != null) 
+                    if (routineProp != null)
                     {
                         var coroutine = routineProp.GetValue(__instance);
                         if (coroutine != null)
@@ -449,7 +478,7 @@ namespace InterpoLoot
                             routineProp.SetValue(__instance, null);
                         }
                     }
-                    
+
                     // Clear the inspected item fields
                     var fields = typeof(PlayerManager).GetFields(flags);
                     foreach (var prop in fields)
@@ -477,7 +506,7 @@ namespace InterpoLoot
                     foreach (var prop in properties)
                     {
                         if (!prop.CanRead || !prop.CanWrite) continue;
-                        
+
                         if (prop.PropertyType == typeof(GearItem))
                         {
                             var val = prop.GetValue(__instance) as GearItem;
@@ -549,19 +578,23 @@ namespace InterpoLoot
 
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
-                
+
                 InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {
-                    gear.gameObject.SetActive(false);
+                    Vector3 origScale = gear.transform.localScale;
+                    gear.transform.localScale = Vector3.zero;
+
                     InterpoLootMain.isTakingItem = true;
                     __instance.ProcessPickupItemInteraction(gear, false, false, false);
                     __instance.ResetPickup();
                     InterpoLootMain.isTakingItem = false;
-                    
+
                     InterpoLootMain.isEatingFromInspect = true;
                     __instance.UseInventoryItem(gear, false);
                     InterpoLootMain.isEatingFromInspect = false;
+
+                    if (gear != null) gear.transform.localScale = origScale;
                 }, startPos, null, null, startRot);
-                
+
                 InterpoLootMain.isTakingItem = true;
                 __instance.ExitInspectGearMode(true);
                 InterpoLootMain.isTakingItem = false;
@@ -586,14 +619,16 @@ namespace InterpoLoot
                 }
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
-                
+
                 InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {
-                    gear.gameObject.SetActive(false);
+                    Vector3 origScale = gear.transform.localScale;
+                    gear.transform.localScale = Vector3.zero;
+
                     InterpoLootMain.isTakingItem = true;
                     __instance.ProcessPickupItemInteraction(gear, false, false, false);
                     __instance.ResetPickup();
                     InterpoLootMain.isTakingItem = false;
-                    
+
                     InterpoLootMain.isEatingFromInspect = true;
                     if (gear.m_WaterSupply != null)
                     {
@@ -617,8 +652,10 @@ namespace InterpoLoot
                         __instance.UseInventoryItem(gear, false);
                     }
                     InterpoLootMain.isEatingFromInspect = false;
+
+                    if (gear != null) gear.transform.localScale = origScale;
                 }, startPos, null, null, startRot);
-                
+
                 InterpoLootMain.isTakingItem = true;
                 __instance.ExitInspectGearMode(true);
                 InterpoLootMain.isTakingItem = false;
@@ -663,7 +700,7 @@ namespace InterpoLoot
             }
 
             Transform camTransform = GameManager.GetMainCamera().transform;
-            
+
             if (pot != null)
             {
                 // Temporarily disable the pot's colliders so the raycast hits the stove behind the 3D inspect UI
@@ -680,7 +717,7 @@ namespace InterpoLoot
                 for (int i = 0; i < colliders.Length; i++) { colliders[i].enabled = states[i]; }
                 return hitPos;
             }
-            
+
             return camTransform.position + (camTransform.forward * 1.5f);
         }
 
@@ -693,13 +730,13 @@ namespace InterpoLoot
                 // Cloning solid food (meat, potatoes)
                 Vector3 startPos = GetStoveOrRaycastPos(__instance);
                 UnityEngine.Quaternion startRot = gear.transform.rotation;
-                
+
                 string prefabName = gear.name.Replace("(Clone)", "").Trim();
                 Il2Cpp.GearItem prefab = Il2Cpp.GearItem.LoadGearItemPrefab(prefabName);
                 Vector3 targetScale = prefab != null ? prefab.transform.localScale : gear.transform.localScale;
 
-                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {}, startPos, gear.transform.localScale, targetScale, startRot);
-                
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => { }, startPos, gear.transform.localScale, targetScale, startRot);
+
                 InterpoLootMain.isTakingItem = true;
             }
             else
@@ -710,9 +747,9 @@ namespace InterpoLoot
                 {
                     Vector3 startPos = GetStoveOrRaycastPos(__instance);
                     UnityEngine.Quaternion startRot = __instance.transform.rotation;
-                    
+
                     InterpoLootMain.StartQuickLootAnimation(waterPrefab.gameObject, null, null, startPos, waterPrefab.transform.localScale, null, startRot);
-                    
+
                     InterpoLootMain.isTakingItem = true;
                 }
             }
@@ -736,7 +773,7 @@ namespace InterpoLoot
             }
 
             Transform camTransform = GameManager.GetMainCamera().transform;
-            
+
             if (pot != null)
             {
                 // Temporarily disable the pot's colliders so the raycast hits the stove behind the 3D inspect UI
@@ -753,7 +790,7 @@ namespace InterpoLoot
                 for (int i = 0; i < colliders.Length; i++) { colliders[i].enabled = states[i]; }
                 return hitPos;
             }
-            
+
             return camTransform.position + (camTransform.forward * 1.5f);
         }
 
@@ -766,10 +803,8 @@ namespace InterpoLoot
                 // We are picking up a cooking pot (or pan/can) directly from a stove!
                 Vector3 startPos = GetStoveOrRaycastPos(gi.m_CookingPotItem);
                 UnityEngine.Quaternion startRot = gi.transform.rotation;
-                
-                InterpoLootMain.StartQuickLootAnimation(gi.gameObject, gi, () => {}, startPos, gi.transform.localScale, null, startRot);
-                
-                // We don't set isTakingItem here because AddItemToPlayerInventory is instantaneous.
+
+                InterpoLootMain.StartQuickLootAnimation(gi.gameObject, gi, () => { }, startPos, gi.transform.localScale, null, startRot);
             }
         }
     }
@@ -824,14 +859,14 @@ namespace InterpoLoot
             {
                 string prefabName = fuel.name.Replace("(Clone)", "").Trim();
                 GearItem prefab = GearItem.LoadGearItemPrefab(prefabName);
-                
+
                 if (prefab != null)
                 {
                     prefab.PlayPickUpClip();
-                    
+
                     Transform cam = GameManager.GetMainCamera().transform;
                     Vector3 targetPos = cam.position + cam.forward * 1.5f;
-                    
+
                     InterpoLootMain.AnimateItemToFire(prefab, targetPos);
                 }
             }
@@ -848,7 +883,7 @@ namespace InterpoLoot
         private static void Prefix(Il2Cpp.BreakDown __instance)
         {
             isBreakingDown = true;
-            
+
             if (InterpoLootMain.lastCrosshairHitPosition != Vector3.zero)
             {
                 breakDownPos = InterpoLootMain.lastCrosshairHitPosition;
@@ -903,7 +938,7 @@ namespace InterpoLoot
                 {
                     string prefabName = gearItem.name.Replace("(Clone)", "").Trim();
                     var prefab = GearItem.LoadGearItemPrefab(prefabName);
-                    
+
                     if (prefab != null)
                     {
                         InterpoLootMain.StartQuickLootAnimation(prefab.gameObject, null, null, gearItem.transform.position, null, null, gearItem.transform.rotation);

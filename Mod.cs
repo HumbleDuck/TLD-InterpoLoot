@@ -5,6 +5,7 @@ using System.Collections;
 using Il2CppTLD.Gear;
 using System.Linq;
 using System.Reflection;
+using System;
 
 [assembly: MelonInfo(typeof(InterpoLoot.InterpoLootMain), "InterpoLoot", "1.0.0", "Author")]
 [assembly: MelonGame("Hinterland", "TheLongDark")]
@@ -42,10 +43,10 @@ namespace InterpoLoot
 
             Settings.OnLoad();
             Time.fixedDeltaTime = 1f / 60f;
-            
+
             // Nix item-on-item physics collisions! (Gear items)
             Physics.IgnoreLayerCollision((int)vp_Layer.Gear, (int)vp_Layer.Gear, true);
-            
+
             MelonLogger.Msg("InterpoLoot has loaded!");
         }
 
@@ -58,7 +59,7 @@ namespace InterpoLoot
             if (pm == null || (pm.GetControlMode() != PlayerControlMode.Normal && pm.GetControlMode() != PlayerControlMode.Locked && pm.GetControlMode() != PlayerControlMode.InVehicle)) return;
 
 
-            
+
             // DO NOT process manual quick loot or inspect hotkeys if we are already in Inspect mode!
             // This prevents left-clicking UI buttons (like "Take") from double-triggering Quick Loot!
             if (pm.IsInspectModeActive() && !isBuggedVanillaInspect) return;
@@ -66,7 +67,7 @@ namespace InterpoLoot
 
             GameObject crosshairObj = pm.GetInteractiveObjectUnderCrosshairs(vanillaInteractRange);
             GearItem hoverItem = crosshairObj != null ? crosshairObj.GetComponent<GearItem>() : null;
-            
+
             // Check if item is currently on a cooking slot
             if (hoverItem != null)
             {
@@ -79,7 +80,7 @@ namespace InterpoLoot
                     return;
                 }
             }
-            
+
             // Check Inspect Keybind
             if (hoverItem != null)
             {
@@ -88,7 +89,7 @@ namespace InterpoLoot
                     // Treat inspect key as the vanilla inspection
                     if (!pm.IsInspectModeActive() || isBuggedVanillaInspect)
                     {
-                        pm.EnterInspectGearMode(hoverItem); 
+                        pm.EnterInspectGearMode(hoverItem);
                     }
                     return;
                 }
@@ -122,13 +123,13 @@ namespace InterpoLoot
         public static bool ShouldLetVanillaHandleInteraction(GearItem gearItem)
         {
             if (gearItem == null) return false;
-            
+
             var flare = gearItem.GetComponent<FlareItem>();
             if (flare != null && flare.IsBurning()) return true;
-            
+
             var torch = gearItem.GetComponent<TorchItem>();
             if (torch != null && torch.IsBurning()) return true;
-            
+
             var lamp = gearItem.GetComponent<KeroseneLampItem>();
             if (lamp != null && lamp.IsOn()) return true;
 
@@ -137,7 +138,7 @@ namespace InterpoLoot
 
             var snare = gearItem.GetComponent<SnareItem>();
             if (snare != null && snare.m_State == SnareState.Set) return true;
-            
+
             return false;
         }
 
@@ -149,7 +150,7 @@ namespace InterpoLoot
         {
             UnityEngine.Transform cam = GameManager.GetMainCamera().transform;
             GameObject playerObj = GameManager.GetPlayerObject();
-            
+
             UnityEngine.RaycastHit[] hits = UnityEngine.Physics.RaycastAll(cam.position, cam.forward, 1.2f, -1, UnityEngine.QueryTriggerInteraction.Ignore);
             foreach (var hit in hits)
             {
@@ -169,13 +170,13 @@ namespace InterpoLoot
             if (sourceObject == null) return null;
             GameObject clone = new GameObject(cloneName);
             clone.layer = 0; // Default layer
-            
+
             clone.transform.position = sourceObject.transform.position;
             clone.transform.rotation = sourceObject.transform.rotation;
             clone.transform.localScale = sourceObject.transform.localScale;
 
             ClothingItem clothing = sourceObject.GetComponent<ClothingItem>();
-            
+
             foreach (MeshRenderer originalRenderer in sourceObject.GetComponentsInChildren<MeshRenderer>(true))
             {
                 if (clothing != null)
@@ -183,7 +184,7 @@ namespace InterpoLoot
                     if (originalRenderer.transform.parent != null && originalRenderer.transform.parent.name == "MeshInspectMode") continue;
                     if (originalRenderer.name == "MeshInspectMode") continue;
                 }
-                
+
                 MeshFilter originalFilter = originalRenderer.GetComponent<MeshFilter>();
                 if (originalFilter != null && originalFilter.sharedMesh != null)
                 {
@@ -192,15 +193,15 @@ namespace InterpoLoot
                     child.transform.rotation = originalRenderer.transform.rotation;
                     child.transform.localScale = originalRenderer.transform.lossyScale;
                     child.transform.SetParent(clone.transform, true);
-                    
+
                     MeshFilter mf = child.AddComponent<MeshFilter>();
                     mf.sharedMesh = originalFilter.sharedMesh;
-                    
+
                     MeshRenderer mr = child.AddComponent<MeshRenderer>();
                     mr.sharedMaterials = originalRenderer.sharedMaterials;
                     mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     mr.enabled = originalRenderer.enabled;
-                    
+
                     if (clothing != null && (originalRenderer.name == "Mesh" || (originalRenderer.transform.parent != null && originalRenderer.transform.parent.name == "Mesh")))
                     {
                         child.SetActive(true);
@@ -209,7 +210,10 @@ namespace InterpoLoot
                     {
                         bool isActuallyActive = true;
                         Transform curr = originalRenderer.transform;
-                        while (curr != null && curr != sourceObject.transform.parent)
+                        // BUG FIX: Change from sourceObject.transform.parent to sourceObject.transform.
+                        // This stops checking before the root object. If the root is disabled (because it's in the inventory),
+                        // it won't disable the cloned children! But it will still properly hide Open/Sealed lid states!
+                        while (curr != null && curr != sourceObject.transform)
                         {
                             if (!curr.gameObject.activeSelf)
                             {
@@ -220,7 +224,7 @@ namespace InterpoLoot
                         }
                         child.SetActive(isActuallyActive);
                     }
-                    
+
                     child.layer = 0;
                 }
             }
@@ -285,54 +289,48 @@ namespace InterpoLoot
             pm.SetControlMode(PlayerControlMode.Locked);
 
             PlayerManager.MaybeDisableInspectModeMesh(gearItem);
-            
+
             // Play rustling sound
-            GameAudioManager.PlaySound("Play_ClothRustle", GameManager.GetPlayerObject()); 
+            GameAudioManager.PlaySound("Play_ClothRustle", GameManager.GetPlayerObject());
 
             // Clone the item for the animation so it doesn't break the inventory logic
             GameObject cloneObj;
-            if (!string.IsNullOrEmpty(customPrefab)) {
+            if (!string.IsNullOrEmpty(customPrefab))
+            {
                 var prefab = GearItem.LoadGearItemPrefab(customPrefab);
                 cloneObj = CreateVisualClone(prefab?.gameObject);
                 cloneObj.transform.localScale = Vector3.one; // Ensure correct scale for loaded prefab
-            } else {
+            }
+            else
+            {
                 cloneObj = CreateVisualClone(gearItem.gameObject);
             }
-            
+
+            // BUG FIX: Just in case the item inherited a 0 scale from the inventory bug, force it back to visible size!
+            if (cloneObj.transform.localScale.sqrMagnitude < 0.01f)
+            {
+                cloneObj.transform.localScale = Vector3.one;
+            }
+
             cloneObj.transform.parent = null;
             cloneObj.SetActive(true);
-            Utils.SetObjectAndChildrenLayer(cloneObj, 2, 0); 
-            
-            Renderer[] renderers = cloneObj.GetComponentsInChildren<Renderer>(true);
-            foreach (Renderer r in renderers)
-            {
-                r.enabled = true;
-                foreach (UnityEngine.Material m in r.materials)
-                {
-                    if (m.HasProperty("_Alpha")) m.SetFloat("_Alpha", 1f);
-                    if (m.HasProperty("_Color")) 
-                    {
-                        UnityEngine.Color c = m.color;
-                        c.a = 1f;
-                        m.color = c;
-                    }
-                }
-            }
-            
+            Utils.SetObjectAndChildrenLayer(cloneObj, 2, 0);
+
+            // Note: Intentionally NOT forcing r.enabled = true here anymore. Let CreateVisualClone handle visibility perfectly.
+
             // (Colliders will be destroyed after we calculate bounds)
             Transform cameraTransform = GameManager.GetMainCamera().transform;
 
-
             // Step 1: pocket retrieval
             Vector3 startPos = cameraTransform.position + (-cameraTransform.up * 1.5f) + (cameraTransform.forward * 0.2f);
-            
+
             // Boost further forward (~1m away) under crosshairs
             Vector3 midPos = cameraTransform.position + (cameraTransform.forward * 1.0f);
-            
+
             float duration = 0.35f;
             float time = 0f;
             bool playedAudio = false;
-            cloneObj.transform.rotation = UnityEngine.Quaternion.LookRotation(cameraTransform.position - midPos) * UnityEngine.Quaternion.Euler(0, -90, 0); 
+            cloneObj.transform.rotation = UnityEngine.Quaternion.LookRotation(cameraTransform.position - midPos) * UnityEngine.Quaternion.Euler(0, -90, 0);
 
             // Calculate centerOffset BEFORE destroying colliders
             Vector3 localCenterOffset = GetCenterOffset(cloneObj);
@@ -345,24 +343,24 @@ namespace InterpoLoot
             {
                 if (gearItem == null || gearItem.gameObject == null) yield break;
                 time += UnityEngine.Time.deltaTime;
-                
+
                 if (!playedAudio && time >= (duration - 0.1f))
                 {
                     gearItem.PlayPickUpClip();
                     playedAudio = true;
                 }
-                
+
                 float t = time / duration;
                 t = 1f - UnityEngine.Mathf.Pow(1f - t, 3f); // Ease-out cubic
-                
+
                 Vector3 worldOffset = cloneObj.transform.TransformVector(localCenterOffset);
                 Vector3 adjustedStartPos = startPos - worldOffset;
                 Vector3 adjustedMidPos = midPos - worldOffset;
-                
+
                 Vector3 currentPos = UnityEngine.Vector3.Lerp(adjustedStartPos, adjustedMidPos, t);
                 float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
                 currentPos += -cameraTransform.up * arc;
-                
+
                 cloneObj.transform.position = currentPos;
                 yield return null;
             }
@@ -381,15 +379,15 @@ namespace InterpoLoot
                 if (gearItem == null || gearItem.gameObject == null) yield break;
                 time += Time.deltaTime;
                 float t = time / duration;
-                
+
                 Vector3 worldOffset = cloneObj.transform.TransformVector(localCenterOffset);
                 Vector3 adjustedMidPos = midPos - worldOffset;
                 Vector3 adjustedEndPos = endPos - worldOffset;
-                
+
                 Vector3 currentPos = Vector3.Lerp(adjustedMidPos, adjustedEndPos, t);
                 float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
                 currentPos += -cameraTransform.up * arc;
-                
+
                 cloneObj.transform.position = currentPos;
                 yield return null;
             }
@@ -402,9 +400,9 @@ namespace InterpoLoot
                 pm.UseInventoryItem(gearItem);
             else if (gearItem.m_WaterSupply != null)
                 pm.UseInventoryItem(gearItem);
-            
+
             isSimulatingRadialConsumption = false;
-            
+
             onComplete?.Invoke();
 
             // Unfreeze player
@@ -416,7 +414,7 @@ namespace InterpoLoot
                 yield return null;
                 yield return null;
                 yield return null;
-                
+
                 if (InterfaceManager.TryGetPanel<Panel_GenericProgressBar>(out var pb))
                 {
                     while (pb.isActiveAndEnabled && pb.GetSliderValue() < 1f && !pb.m_MarkForCancel)
@@ -448,7 +446,7 @@ namespace InterpoLoot
 
             // Spawn visual clone for interpolation BEFORE native logic modifies the object
             GameObject cloneObj = CreateVisualClone(sourceObject);
-            if (cloneObj == null) 
+            if (cloneObj == null)
             {
                 interpolatingItems.Remove(sourceObject);
                 yield break;
@@ -465,7 +463,7 @@ namespace InterpoLoot
                 GameManager.GetPlayerManagerComponent().ProcessPickupItemInteraction(originalGear, false, false, false);
                 GameManager.GetPlayerManagerComponent().ResetPickup();
             }
-            
+
             if (originalGear != null)
                 originalGear.PlayPickUpClip();
 
@@ -478,31 +476,15 @@ namespace InterpoLoot
             Vector3 localCenterOffset = GetCenterOffset(cloneObj);
 
             Utils.SetObjectAndChildrenLayer(cloneObj, 2, 0); // Layer 2 is Ignore Raycast, 0 preserves nothing
-            
-            Renderer[] renderers = cloneObj.GetComponentsInChildren<Renderer>(true);
-            foreach (Renderer r in renderers)
-            {
-                r.enabled = true;
-                foreach (UnityEngine.Material m in r.materials)
-                {
-                    if (m.HasProperty("_Alpha")) m.SetFloat("_Alpha", 1f);
-                    if (m.HasProperty("_Color")) 
-                    {
-                        UnityEngine.Color c = m.color;
-                        c.a = 1f;
-                        m.color = c;
-                    }
-                }
-            }
 
             float duration = 0.5f;
             float time = 0f;
-            
+
             cloneObj.transform.position = startPos;
             cloneObj.transform.rotation = startRot;
 
             Transform cameraTransform = GameManager.GetMainCamera().transform;
-            
+
             // Calculate dynamic pocket offset based on max mesh bounds to prevent large items from clipping the camera
             Bounds bounds = new Bounds(Vector3.zero, Vector3.zero);
             bool hasBounds = false;
@@ -519,29 +501,29 @@ namespace InterpoLoot
                 if (cloneObj == null) yield break;
                 time += Time.deltaTime;
                 float t = time / duration;
-                
+
                 // Ease out cubic
                 t = 1f - Mathf.Pow(1f - t, 3f);
 
                 // Move to pocket position, offset further down by the item's max dimension
                 Vector3 targetPos = GetPocketPosition();
                 targetPos += cameraTransform.up * -dynamicOffset;
-                
+
                 Vector3 worldOffset = cloneObj.transform.TransformVector(localCenterOffset);
                 Vector3 adjustedTargetPos = targetPos - worldOffset;
-                
+
                 // Adjust startPos by initial world offset as well so it stays anchored correctly
                 Vector3 initialWorldOffset = cloneObj.transform.TransformVector(localCenterOffset); // Approximation since rotation changes
                 Vector3 adjustedStartPos = startPos - initialWorldOffset;
-                
+
                 Vector3 currentPos = Vector3.Lerp(adjustedStartPos, adjustedTargetPos, t);
-                
+
                 // Add a very subtle downward arc to prevent clipping without looking too exaggerated
                 float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
                 currentPos += -cameraTransform.up * arc;
-                
+
                 cloneObj.transform.position = currentPos;
-                
+
                 if (startScale.HasValue && targetScale.HasValue)
                 {
                     cloneObj.transform.localScale = Vector3.Lerp(startScale.Value, targetScale.Value, t);
@@ -553,12 +535,13 @@ namespace InterpoLoot
 
                 yield return null;
             }
-            
+
             // Destroy clone
             UnityEngine.Object.Destroy(cloneObj);
-            
+
             interpolatingItems.Remove(sourceObject);
         }
+
         public static void StartInspectLerpCoroutine(GearItem gearItem, Vector3 startPos)
         {
             MelonCoroutines.Start(InspectLerpCoroutine(gearItem, startPos));
@@ -567,7 +550,7 @@ namespace InterpoLoot
         private static IEnumerator InspectLerpCoroutine(GearItem gearItem, Vector3 startPos)
         {
             if (gearItem == null || interpolatingItems.Contains(gearItem.gameObject)) yield break;
-            
+
             interpolatingItems.Add(gearItem.gameObject);
 
             Vector3 localCenterOffset = GetCenterOffset(gearItem.gameObject);
@@ -591,7 +574,7 @@ namespace InterpoLoot
                 Vector3 currentPos = Vector3.Lerp(startPos, adjustedTargetPos, t);
                 float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
                 currentPos += -cameraTransform.up * arc;
-                
+
                 gearItem.transform.position = currentPos;
                 yield return null;
             }
@@ -599,13 +582,11 @@ namespace InterpoLoot
             interpolatingItems.Remove(gearItem.gameObject);
         }
 
-
-
         public static void AnimateItemToSlot(GameObject originalObj, Vector3 finalPos, UnityEngine.Quaternion finalRot, Il2CppAK.Wwise.Event delayedAudio = null)
         {
             if (originalObj == null || GameManager.GetMainCamera() == null) return;
             isAnimatingPlacement = true;
-            
+
             // The item is already on the stove physically. Hide it by scaling to zero so we don't break its internal state by disabling it.
             Vector3 originalScale = originalObj.transform.localScale;
             originalObj.transform.localScale = Vector3.zero;
@@ -619,7 +600,7 @@ namespace InterpoLoot
             clone.transform.position = startPos;
             clone.transform.rotation = finalRot;
             clone.SetActive(true);
-            
+
             // The clone copied the zero scale, so we must set it back to the original scale
             clone.transform.localScale = originalScale;
 
@@ -627,7 +608,7 @@ namespace InterpoLoot
 
             MelonCoroutines.Start(PlacementCoroutineObj(clone, null, startPos, startRot, finalPos, finalRot, () => {
                 UnityEngine.Object.Destroy(clone);
-                
+
                 // Restore original item scale
                 if (originalObj != null)
                 {
@@ -637,6 +618,7 @@ namespace InterpoLoot
                 GameManager.GetPlayerManagerComponent().SetControlMode(PlayerControlMode.Normal);
             }, null, null, null, null, delayedAudio));
         }
+
         private static System.Collections.IEnumerator PlacementCoroutineObj(GameObject clone, Il2Cpp.GearItem gearItemToCook, Vector3 startPos, UnityEngine.Quaternion startRot, Vector3 finalPos, UnityEngine.Quaternion finalRot, Action onComplete, Vector3? startScale = null, Vector3? finalScale = null, GameObject dummyPotObject = null, GameObject emptyPotClone = null, Il2CppAK.Wwise.Event delayedAudio = null)
         {
             float duration = 0.25f;
@@ -653,7 +635,7 @@ namespace InterpoLoot
                 }
                 Vector3 targetPos = gearItemToCook != null ? gearItemToCook.transform.position : finalPos;
                 UnityEngine.Quaternion targetRot = gearItemToCook != null ? gearItemToCook.transform.rotation : finalRot;
-                
+
                 if (clone != null)
                 {
                     float t = elapsed / duration;
@@ -683,8 +665,8 @@ namespace InterpoLoot
                 {
                     if (finalScale.HasValue) gearItemToCook.transform.localScale = finalScale.Value;
                 }
-                
-                foreach (ParticleSystem ps in gearItemToCook.GetComponentsInChildren<ParticleSystem>(true)) 
+
+                foreach (ParticleSystem ps in gearItemToCook.GetComponentsInChildren<ParticleSystem>(true))
                 {
                     ps.Play();
                 }
@@ -700,18 +682,18 @@ namespace InterpoLoot
         public static void SpawnSimulatedYieldClone(GearItem yieldPrefab, Vector3 spawnPos)
         {
             if (yieldPrefab == null) return;
-            
+
             // Pass null for originalGear because the real item was already silently added to the inventory
             // But we need to play the audio manually!
             yieldPrefab.PlayPickUpClip();
 
-            StartQuickLootAnimation(yieldPrefab.gameObject, null, () => {}, spawnPos, yieldPrefab.transform.localScale, yieldPrefab.transform.localScale, UnityEngine.Quaternion.identity);
+            StartQuickLootAnimation(yieldPrefab.gameObject, null, () => { }, spawnPos, yieldPrefab.transform.localScale, yieldPrefab.transform.localScale, UnityEngine.Quaternion.identity);
         }
 
         public static void AnimateItemToFire(GearItem gearItem, Vector3 targetPos)
         {
             if (gearItem == null || GameManager.GetMainCamera() == null) return;
-            
+
             Transform camTransform = GameManager.GetMainCamera().transform;
             Vector3 startPos = GetPocketPosition();
             UnityEngine.Quaternion startRot = UnityEngine.Quaternion.identity;
@@ -719,13 +701,13 @@ namespace InterpoLoot
             string prefabName = gearItem.name.Replace("(Clone)", "").Trim();
             GearItem prefab = GearItem.LoadGearItemPrefab(prefabName);
             GameObject clone = CreateVisualClone(prefab != null ? prefab.gameObject : gearItem.gameObject, "FuelVisualClone");
-            
+
             clone.transform.localScale = Vector3.one;
             clone.transform.position = startPos;
             clone.transform.rotation = startRot;
-            
+
             clone.SetActive(true);
-            
+
             // Calculate dynamic pocket offset based on max mesh bounds to prevent large items from clipping the camera
             Bounds bounds = new Bounds(Vector3.zero, Vector3.zero);
             bool hasBounds = false;
@@ -736,12 +718,12 @@ namespace InterpoLoot
             }
             float dynamicOffset = hasBounds ? Mathf.Max(bounds.extents.x, bounds.extents.y, bounds.extents.z) : 0f;
             dynamicOffset = Mathf.Clamp(dynamicOffset, 0f, 1.0f);
-            
+
             startPos += camTransform.up * -dynamicOffset;
 
             Vector3 localCenterOffset = GetCenterOffset(clone);
             Vector3 initialWorldOffset = clone.transform.TransformVector(localCenterOffset);
-            
+
             startPos -= initialWorldOffset; // Visually start at hand
             targetPos += camTransform.forward * 0.5f; // Push target further into the fire
             targetPos -= initialWorldOffset; // Visually end perfectly on the fire
@@ -760,7 +742,7 @@ namespace InterpoLoot
                 {
                     float t = elapsed / duration;
                     float easeT = t * t * (3f - 2f * t); // Smoothstep
-                    
+
                     Vector3 currentPos = Vector3.Lerp(startPos, targetPos, easeT);
                     float arc = Mathf.Sin(easeT * Mathf.PI) * 0.1f;
                     currentPos += Vector3.up * arc;
