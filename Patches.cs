@@ -806,6 +806,15 @@ namespace InterpoLoot
 
                 InterpoLootMain.StartQuickLootAnimation(gi.gameObject, gi, () => { }, startPos, gi.transform.localScale, null, startRot);
             }
+            else if (gi.name.ToLower().Contains("travois"))
+            {
+                // When picking up the travois, the massive world sled is handled by vanilla, 
+                // and the folded gear item is instantly added to the inventory. 
+                // We simulate grabbing it from the ground by raycasting slightly in front of the camera.
+                Vector3 startPos = GetStoveOrRaycastPos(null);
+
+                InterpoLootMain.StartQuickLootAnimation(gi.gameObject, gi, () => { }, startPos, gi.transform.localScale, null, UnityEngine.Quaternion.identity);
+            }
         }
     }
 

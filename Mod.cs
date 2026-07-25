@@ -50,15 +50,12 @@ namespace InterpoLoot
             MelonLogger.Msg("InterpoLoot has loaded!");
         }
 
-
         public override void OnUpdate()
         {
             if (GameManager.m_IsPaused || GameManager.IsMainMenuActive()) return;
 
             PlayerManager pm = GameManager.GetPlayerManagerComponent();
             if (pm == null || (pm.GetControlMode() != PlayerControlMode.Normal && pm.GetControlMode() != PlayerControlMode.Locked && pm.GetControlMode() != PlayerControlMode.InVehicle)) return;
-
-
 
             // DO NOT process manual quick loot or inspect hotkeys if we are already in Inspect mode!
             // This prevents left-clicking UI buttons (like "Take") from double-triggering Quick Loot!
@@ -117,8 +114,6 @@ namespace InterpoLoot
                 }
             }
         }
-
-
 
         public static bool ShouldLetVanillaHandleInteraction(GearItem gearItem)
         {
@@ -316,9 +311,6 @@ namespace InterpoLoot
             cloneObj.SetActive(true);
             Utils.SetObjectAndChildrenLayer(cloneObj, 2, 0);
 
-            // Note: Intentionally NOT forcing r.enabled = true here anymore. Let CreateVisualClone handle visibility perfectly.
-
-            // (Colliders will be destroyed after we calculate bounds)
             Transform cameraTransform = GameManager.GetMainCamera().transform;
 
             // Step 1: pocket retrieval
@@ -330,7 +322,19 @@ namespace InterpoLoot
             float duration = 0.35f;
             float time = 0f;
             bool playedAudio = false;
-            cloneObj.transform.rotation = UnityEngine.Quaternion.LookRotation(cameraTransform.position - midPos) * UnityEngine.Quaternion.Euler(0, -90, 0);
+
+            bool isDrink = (gearItem.m_WaterSupply != null) || (gearItem.m_FoodItem != null && gearItem.m_FoodItem.m_IsDrink);
+
+            if (isDrink) // Drinks only need a -90f y-rotation for their logos to face the player
+            {
+                cloneObj.transform.rotation = UnityEngine.Quaternion.LookRotation(cameraTransform.position - midPos) * UnityEngine.Quaternion.Euler(0, -90, 0);
+            }
+            else // Food needs to be rotated and tilted, to give a better impression of the size/shape
+            {
+                cloneObj.transform.rotation = UnityEngine.Quaternion.LookRotation(cameraTransform.position - midPos);
+                cloneObj.transform.Rotate(0, 90, 0, Space.Self);
+                cloneObj.transform.RotateAround(cloneObj.transform.position, cameraTransform.right, -45f);
+            }
 
             // Calculate centerOffset BEFORE destroying colliders
             Vector3 localCenterOffset = GetCenterOffset(cloneObj);
@@ -748,8 +752,6 @@ namespace InterpoLoot
                     currentPos += Vector3.up * arc;
 
                     clone.transform.position = currentPos;
-                    // Tumble slightly while falling into the fire
-                    clone.transform.Rotate(new Vector3(180f, 90f, 45f) * Time.deltaTime);
                 }
                 elapsed += Time.deltaTime;
                 yield return null;
