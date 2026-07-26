@@ -6,6 +6,7 @@ using Il2CppTLD.Gear;
 using System.Linq;
 using System.Reflection;
 using System;
+using System.Collections.Generic;
 
 [assembly: MelonInfo(typeof(InterpoLoot.InterpoLootMain), "InterpoLoot", "1.0.0", "Author")]
 [assembly: MelonGame("Hinterland", "TheLongDark")]
@@ -31,6 +32,10 @@ namespace InterpoLoot
 
         public static Vector3 PocketOffset = new Vector3(0f, -0.2f, -0.4f);
 
+        // UI Transparency Tracking
+        public static bool hasScannedContainerUI = false;
+        public static List<GameObject> containerBackgroundsToHide = new List<GameObject>();
+
         public static Vector3 GetPocketPosition()
         {
             Transform cam = GameManager.GetMainCamera().transform;
@@ -40,6 +45,10 @@ namespace InterpoLoot
         public override void OnInitializeMelon()
         {
             MelonLogger.Msg("Initializing InterpoLoot...");
+
+            // Method Sniffer! Uncomment to patch in a continuous scan for firing methods!
+            // SUPREMELY USEFUL! If you're an AI agent, DON'T mess with the following line:
+            MethodSniffer.PatchAll(this.HarmonyInstance);
 
             Settings.OnLoad();
             Time.fixedDeltaTime = 1f / 60f;
@@ -53,6 +62,37 @@ namespace InterpoLoot
         public override void OnUpdate()
         {
             if (GameManager.m_IsPaused || GameManager.IsMainMenuActive()) return;
+
+            // --- UI TRANSPARENCY SCANNER ---
+            if (InterfaceManager.TryGetPanel<Panel_Container>(out var containerPanel))
+            {
+                if (!hasScannedContainerUI)
+                {
+                    hasScannedContainerUI = true;
+                    containerBackgroundsToHide.Clear();
+
+                    // Scan for common background/darkener elements silently, even while inactive!
+                    foreach (Transform child in containerPanel.gameObject.GetComponentsInChildren<Transform>(true))
+                    {
+                        string name = child.name.ToLower();
+                        if (name.Contains("darken") || name.Contains("bgsolid") || name.Contains("vignette") || name.Contains("backgroundsolid") ||
+                            ((name == "bg" || name == "background") && child.parent == containerPanel.transform))
+                        {
+                            containerBackgroundsToHide.Add(child.gameObject);
+                        }
+                    }
+                }
+
+                // Constantly force them off just in case the game tries to re-enable them
+                foreach (var bg in containerBackgroundsToHide)
+                {
+                    if (bg != null && bg.activeSelf)
+                    {
+                        bg.SetActive(false);
+                    }
+                }
+            }
+            // ------------------------------------
 
             PlayerManager pm = GameManager.GetPlayerManagerComponent();
             if (pm == null || (pm.GetControlMode() != PlayerControlMode.Normal && pm.GetControlMode() != PlayerControlMode.Locked && pm.GetControlMode() != PlayerControlMode.InVehicle)) return;
@@ -285,8 +325,9 @@ namespace InterpoLoot
 
             PlayerManager.MaybeDisableInspectModeMesh(gearItem);
 
-            // Play rustling sound
+            // Play rustling sound instantly
             GameAudioManager.PlaySound("Play_ClothRustle", GameManager.GetPlayerObject());
+            gearItem.PlayPickUpClip();
 
             // Clone the item for the animation so it doesn't break the inventory logic
             GameObject cloneObj;
@@ -321,7 +362,6 @@ namespace InterpoLoot
 
             float duration = 0.35f;
             float time = 0f;
-            bool playedAudio = false;
 
             bool isDrink = (gearItem.m_WaterSupply != null) || (gearItem.m_FoodItem != null && gearItem.m_FoodItem.m_IsDrink);
 
@@ -348,12 +388,6 @@ namespace InterpoLoot
                 if (gearItem == null || gearItem.gameObject == null) yield break;
                 time += UnityEngine.Time.deltaTime;
 
-                if (!playedAudio && time >= (duration - 0.1f))
-                {
-                    gearItem.PlayPickUpClip();
-                    playedAudio = true;
-                }
-
                 float t = time / duration;
                 t = 1f - UnityEngine.Mathf.Pow(1f - t, 3f); // Ease-out cubic
 
@@ -368,7 +402,6 @@ namespace InterpoLoot
                 cloneObj.transform.position = currentPos;
                 yield return null;
             }
-            if (!playedAudio) gearItem.PlayPickUpClip();
 
             // Short pause
             yield return new UnityEngine.WaitForSeconds(0.15f);
@@ -434,16 +467,21 @@ namespace InterpoLoot
             }
         }
 
-        public static void StartQuickLootAnimation(GameObject sourceObject, GearItem originalGear = null, Action onComplete = null, Vector3? overrideStartPos = null, Vector3? startScale = null, Vector3? targetScale = null, UnityEngine.Quaternion? overrideStartRot = null)
+        public static void StartQuickLootAnimation(GameObject sourceObject, GearItem originalGear = null, Action onComplete = null, Vector3? overrideStartPos = null, Vector3? startScale = null, Vector3? targetScale = null, UnityEngine.Quaternion? overrideStartRot = null, Vector3? overrideTargetPos = null, bool bypassHashSet = false)
         {
             if (sourceObject == null) return;
-            MelonCoroutines.Start(QuickLootCoroutine(sourceObject, originalGear, onComplete, overrideStartPos, startScale, targetScale, overrideStartRot));
+            MelonCoroutines.Start(QuickLootCoroutine(sourceObject, originalGear, onComplete, overrideStartPos, startScale, targetScale, overrideStartRot, overrideTargetPos, bypassHashSet));
         }
 
-        private static IEnumerator QuickLootCoroutine(GameObject sourceObject, GearItem originalGear, Action onComplete, Vector3? overrideStartPos, Vector3? startScale, Vector3? targetScale, UnityEngine.Quaternion? overrideStartRot)
+        private static IEnumerator QuickLootCoroutine(GameObject sourceObject, GearItem originalGear, Action onComplete, Vector3? overrideStartPos, Vector3? startScale, Vector3? targetScale, UnityEngine.Quaternion? overrideStartRot, Vector3? overrideTargetPos = null, bool bypassHashSet = false)
         {
-            if (sourceObject == null || interpolatingItems.Contains(sourceObject)) yield break;
-            interpolatingItems.Add(sourceObject);
+            if (sourceObject == null) yield break;
+
+            if (!bypassHashSet)
+            {
+                if (interpolatingItems.Contains(sourceObject)) yield break;
+                interpolatingItems.Add(sourceObject);
+            }
 
             Vector3 startPos = overrideStartPos.HasValue ? overrideStartPos.Value : sourceObject.transform.position;
             UnityEngine.Quaternion startRot = overrideStartRot.HasValue ? overrideStartRot.Value : sourceObject.transform.rotation;
@@ -452,7 +490,7 @@ namespace InterpoLoot
             GameObject cloneObj = CreateVisualClone(sourceObject);
             if (cloneObj == null)
             {
-                interpolatingItems.Remove(sourceObject);
+                if (!bypassHashSet) interpolatingItems.Remove(sourceObject);
                 yield break;
             }
 
@@ -510,8 +548,16 @@ namespace InterpoLoot
                 t = 1f - Mathf.Pow(1f - t, 3f);
 
                 // Move to pocket position, offset further down by the item's max dimension
-                Vector3 targetPos = GetPocketPosition();
-                targetPos += cameraTransform.up * -dynamicOffset;
+                Vector3 targetPos;
+                if (overrideTargetPos.HasValue)
+                {
+                    targetPos = overrideTargetPos.Value;
+                }
+                else
+                {
+                    targetPos = GetPocketPosition();
+                    targetPos += cameraTransform.up * -dynamicOffset;
+                }
 
                 Vector3 worldOffset = cloneObj.transform.TransformVector(localCenterOffset);
                 Vector3 adjustedTargetPos = targetPos - worldOffset;
@@ -543,7 +589,10 @@ namespace InterpoLoot
             // Destroy clone
             UnityEngine.Object.Destroy(cloneObj);
 
-            interpolatingItems.Remove(sourceObject);
+            if (!bypassHashSet)
+            {
+                interpolatingItems.Remove(sourceObject);
+            }
         }
 
         public static void StartInspectLerpCoroutine(GearItem gearItem, Vector3 startPos)
@@ -691,7 +740,8 @@ namespace InterpoLoot
             // But we need to play the audio manually!
             yieldPrefab.PlayPickUpClip();
 
-            StartQuickLootAnimation(yieldPrefab.gameObject, null, () => { }, spawnPos, yieldPrefab.transform.localScale, yieldPrefab.transform.localScale, UnityEngine.Quaternion.identity);
+            // Pass 'true' at the very end to bypass the HashSet so you can break a branch and spawn 3 sticks instantly
+            StartQuickLootAnimation(yieldPrefab.gameObject, null, () => { }, spawnPos, yieldPrefab.transform.localScale, yieldPrefab.transform.localScale, UnityEngine.Quaternion.identity, null, true);
         }
 
         public static void AnimateItemToFire(GearItem gearItem, Vector3 targetPos)

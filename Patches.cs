@@ -1,8 +1,9 @@
 using HarmonyLib;
 using Il2Cpp;
 using Il2CppTLD.Gear;
-using UnityEngine;
+using MelonLoader;
 using System;
+using UnityEngine;
 
 namespace InterpoLoot
 {
@@ -113,12 +114,6 @@ namespace InterpoLoot
                 return;
             }
 
-            if (__result == null)
-            {
-                // See if there's actually an object we're looking at but it's not being returned
-                // Maybe log a raycast here? No, too spammy.
-            }
-
             if (__result != null)
             {
                 GearItem inspectedGear = __instance.GearItemBeingInspected();
@@ -139,10 +134,6 @@ namespace InterpoLoot
                     }
                     else
                     {
-                        if (Vector3.Distance(hitGear.transform.position, InterpoLootMain.lastInspectedItemOriginalPosition) > 0.01f)
-                        {
-
-                        }
                         // Continually track the TRUE world position of the item we are looking at!
                         // This guarantees we have the exact position if they click it, before the engine moves it!
                         InterpoLootMain.lastInspectedItemOriginalPosition = hitGear.transform.position;
@@ -150,10 +141,6 @@ namespace InterpoLoot
                     }
                 }
 
-                if (Vector3.Distance(__instance.m_LocationOfLastInteractHit, InterpoLootMain.lastCrosshairHitPosition) > 0.01f)
-                {
-
-                }
                 InterpoLootMain.lastCrosshairHitPosition = __instance.m_LocationOfLastInteractHit;
             }
         }
@@ -270,11 +257,9 @@ namespace InterpoLoot
 
             if (Settings.options.VanillaInventoryConsumption) return true;
 
-            bool reopenInv = false;
             if (InterfaceManager.TryGetPanel<Panel_Inventory>(out var inv) && inv.IsEnabled())
             {
                 inv.Enable(false);
-                reopenInv = true;
             }
 
             if (InterpoLootMain.isEatingFromCookingSlot)
@@ -307,7 +292,8 @@ namespace InterpoLoot
                 return false;
             }
 
-            InterpoLootMain.StartRadialConsumptionAnimation(__0, reopenInv);
+            // Ensure we pass 'false' for reopenInventory so it stays closed
+            InterpoLootMain.StartRadialConsumptionAnimation(__0, false);
             return false;
         }
     }
@@ -329,11 +315,9 @@ namespace InterpoLoot
             GearItem gearItem = __0.GetComponent<GearItem>();
             if (gearItem != null)
             {
-                bool reopenInv = false;
                 if (InterfaceManager.TryGetPanel<Panel_Inventory>(out var inv) && inv.IsEnabled())
                 {
                     inv.Enable(false);
-                    reopenInv = true;
                 }
 
                 if (InterpoLootMain.isEatingFromCookingSlot)
@@ -365,7 +349,8 @@ namespace InterpoLoot
                 float volumeToDrink = __instance.CalculateWaterVolumeToDrink(__0.m_VolumeInLiters).ToQuantity(1f);
                 string prefabName = volumeToDrink <= 0.5f ? "GEAR_Water500ml" : "GEAR_Water1000ml";
 
-                InterpoLootMain.StartRadialConsumptionAnimation(gearItem, reopenInv, null, prefabName);
+                // Ensure we pass 'false' for reopenInventory so it stays closed
+                InterpoLootMain.StartRadialConsumptionAnimation(gearItem, false, null, prefabName);
             }
             return false;
         }
@@ -525,7 +510,7 @@ namespace InterpoLoot
                         }
                     }
                 }
-                catch (System.Exception ex)
+                catch (System.Exception)
                 {
 
                 }
@@ -617,50 +602,27 @@ namespace InterpoLoot
                 {
                     return true; // Let vanilla handle 'Pass Time' for snow/water on stoves
                 }
+
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
 
-                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => {
-                    Vector3 origScale = gear.transform.localScale;
-                    gear.transform.localScale = Vector3.zero;
+                // 1. Create the visual clone and animate it to the face. 
+                // Pass 'null' for the lambda so it doesn't run ANY crashy manual logic!
+                // Pass 'true' at the end to bypass the HashSet so the destroyed original doesn't cause errors.
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, null, null, startPos, null, null, startRot, null, true);
 
-                    InterpoLootMain.isTakingItem = true;
-                    __instance.ProcessPickupItemInteraction(gear, false, false, false);
-                    __instance.ResetPickup();
-                    InterpoLootMain.isTakingItem = false;
-
-                    InterpoLootMain.isEatingFromInspect = true;
-                    if (gear.m_WaterSupply != null)
-                    {
-                        var method = typeof(PlayerManager).GetMethod("DrinkFromWaterSupply", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                        if (method != null)
-                        {
-                            var parameters = method.GetParameters();
-                            if (parameters.Length == 1)
-                                method.Invoke(__instance, new object[] { gear.m_WaterSupply });
-                            else if (parameters.Length == 2)
-                            {
-                                // Pass null or default for the second parameter (volumeAvailable)
-                                var secondParamType = parameters[1].ParameterType;
-                                object defaultVal = secondParamType.IsValueType ? System.Activator.CreateInstance(secondParamType) : null;
-                                method.Invoke(__instance, new object[] { gear.m_WaterSupply, defaultVal });
-                            }
-                        }
-                    }
-                    else
-                    {
-                        __instance.UseInventoryItem(gear, false);
-                    }
-                    InterpoLootMain.isEatingFromInspect = false;
-
-                    if (gear != null) gear.transform.localScale = origScale;
-                }, startPos, null, null, startRot);
-
-                InterpoLootMain.isTakingItem = true;
-                __instance.ExitInspectGearMode(true);
-                InterpoLootMain.isTakingItem = false;
+                // 2. Set the flag to block your radial patch from firing
+                InterpoLootMain.isEatingFromInspect = true;
             }
-            return false;
+
+            // 3. Return TRUE to let vanilla execute its own flawless consumption logic!
+            return true;
+        }
+
+        // 4. Reset the flag after vanilla is done
+        private static void Postfix()
+        {
+            InterpoLootMain.isEatingFromInspect = false;
         }
     }
 
@@ -815,6 +777,22 @@ namespace InterpoLoot
 
                 InterpoLootMain.StartQuickLootAnimation(gi.gameObject, gi, () => { }, startPos, gi.transform.localScale, null, UnityEngine.Quaternion.identity);
             }
+            else if (InterfaceManager.TryGetPanel<Panel_Container>(out var p) && p.isActiveAndEnabled)
+            {
+                // LOOTING: Container -> Inventory
+                // This correctly hooks the underlying data logic layer so it only fires when a transfer actually happens!
+                UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
+
+                // Get the point on the container where they clicked, or default to front of camera
+                Vector3 containerPos = InterpoLootMain.lastCrosshairHitPosition != Vector3.zero
+                    ? InterpoLootMain.lastCrosshairHitPosition
+                    : GameManager.GetMainCamera().transform.position + (camFwd * 1.5f);
+
+                Vector3 startPos = containerPos + (camFwd * 0.5f);
+
+                // Pass 'true' at the end to bypass the HashSet so we can pull a stack instantly!
+                InterpoLootMain.StartQuickLootAnimation(gi.gameObject, null, null, startPos, gi.transform.localScale, null, gi.transform.rotation, null, true);
+            }
         }
     }
 
@@ -953,6 +931,106 @@ namespace InterpoLoot
                         InterpoLootMain.StartQuickLootAnimation(prefab.gameObject, null, null, gearItem.transform.position, null, null, gearItem.transform.rotation);
                     }
                 }
+            }
+        }
+    }
+
+    // --- UI Transfer Patches ---
+
+    public static class TransferManager
+    {
+        public static GearItem pendingItem = null;
+        public static bool isStashing = false;
+    }
+
+    [HarmonyPatch(typeof(Il2Cpp.Panel_Container), nameof(Il2Cpp.Panel_Container.OnContainerToInventory))]
+    internal class Panel_Container_OnContainerToInventory_Patch
+    {
+        private static void Prefix(Il2Cpp.Panel_Container __instance)
+        {
+            var selectedItem = __instance.GetCurrentlySelectedItem();
+            TransferManager.pendingItem = selectedItem?.m_GearItem;
+            TransferManager.isStashing = false; // Looting (Container -> Inventory)
+        }
+
+        private static void Postfix()
+        {
+            if (TransferManager.pendingItem == null) return;
+
+            // If the slider opened, DO NOT SPAWN YET! Leave pendingItem intact for Panel_PickUnits to use.
+            if (InterfaceManager.TryGetPanel<Panel_PickUnits>(out var pu) && pu.isActiveAndEnabled) return;
+
+            // Single item transfer was successful!
+            UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
+            Vector3 containerPos = InterpoLootMain.lastCrosshairHitPosition != Vector3.zero
+                ? InterpoLootMain.lastCrosshairHitPosition
+                : GameManager.GetMainCamera().transform.position + (camFwd * 1.5f);
+            Vector3 startPos = containerPos + (camFwd * 0.5f);
+
+            InterpoLootMain.StartQuickLootAnimation(TransferManager.pendingItem.gameObject, null, null, startPos, TransferManager.pendingItem.transform.localScale, null, TransferManager.pendingItem.transform.rotation, null, true);
+            TransferManager.pendingItem = null;
+        }
+    }
+
+    [HarmonyPatch(typeof(Il2Cpp.Panel_Container), nameof(Il2Cpp.Panel_Container.OnInventoryToContainer))]
+    internal class Panel_Container_OnInventoryToContainer_Patch
+    {
+        private static void Prefix(Il2Cpp.Panel_Container __instance)
+        {
+            var selectedItem = __instance.GetCurrentlySelectedItem();
+            TransferManager.pendingItem = selectedItem?.m_GearItem;
+            TransferManager.isStashing = true; // Stashing (Inventory -> Container)
+        }
+
+        private static void Postfix()
+        {
+            if (TransferManager.pendingItem == null) return;
+
+            // If the slider opened, DO NOT SPAWN YET!
+            if (InterfaceManager.TryGetPanel<Panel_PickUnits>(out var pu) && pu.isActiveAndEnabled) return;
+
+            // Single item transfer was successful!
+            UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
+            Vector3 startPos = InterpoLootMain.GetPocketPosition();
+            Vector3 containerPos = InterpoLootMain.lastCrosshairHitPosition != Vector3.zero
+                ? InterpoLootMain.lastCrosshairHitPosition
+                : GameManager.GetMainCamera().transform.position + (camFwd * 1.5f);
+            Vector3 targetPos = containerPos + (camFwd * 0.5f);
+
+            InterpoLootMain.StartQuickLootAnimation(TransferManager.pendingItem.gameObject, null, null, startPos, TransferManager.pendingItem.transform.localScale, null, TransferManager.pendingItem.transform.rotation, targetPos, true);
+            TransferManager.pendingItem = null;
+        }
+    }
+
+    [HarmonyPatch(typeof(Il2Cpp.Panel_PickUnits), nameof(Il2Cpp.Panel_PickUnits.OnExecute))]
+    internal class Panel_PickUnits_OnExecute_Patch
+    {
+        private static void Prefix(Il2Cpp.Panel_PickUnits __instance)
+        {
+            // Use the cached item that we perfectly saved BEFORE the slider broke the UI reference!
+            if (__instance.m_numUnits > 0 && TransferManager.pendingItem != null)
+            {
+                GearItem itemToTransfer = TransferManager.pendingItem;
+                bool wasStashing = TransferManager.isStashing;
+
+                UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
+                Vector3 pocketPos = InterpoLootMain.GetPocketPosition();
+                Vector3 containerPos = InterpoLootMain.lastCrosshairHitPosition != Vector3.zero
+                    ? InterpoLootMain.lastCrosshairHitPosition
+                    : GameManager.GetMainCamera().transform.position + (camFwd * 1.5f);
+                Vector3 frontOfContainer = containerPos + (camFwd * 0.5f);
+
+                if (wasStashing)
+                {
+                    InterpoLootMain.StartQuickLootAnimation(itemToTransfer.gameObject, null, null, pocketPos, itemToTransfer.transform.localScale, null, itemToTransfer.transform.rotation, frontOfContainer, true);
+                }
+                else
+                {
+                    InterpoLootMain.StartQuickLootAnimation(itemToTransfer.gameObject, null, null, frontOfContainer, itemToTransfer.transform.localScale, null, itemToTransfer.transform.rotation, null, true);
+                }
+
+                // Clear it so it doesn't fire again improperly
+                TransferManager.pendingItem = null;
             }
         }
     }
