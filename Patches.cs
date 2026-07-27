@@ -121,9 +121,31 @@ namespace InterpoLoot
     internal class GearPlacePoint_DropAndPlaceItem_Patch
     {
         public static bool isRedirecting = false;
+        public static int activeDropAndPlaceCount = 0;
+
+        // Snapshot: was the item sealed BEFORE vanilla had a chance to open it?
+        // (GearItem.MaybeFlagItemAsOpened is called inside DropAndPlaceItem, so by Postfix
+        // OBJ_CannedFood is already OFF for previously-sealed cans.  We must read it here.)
+        private static bool s_NewItemWasSealed = false;
 
         private static bool Prefix(Il2Cpp.GearPlacePoint __instance, GearItem newPlacedItem)
         {
+            activeDropAndPlaceCount++;
+
+            // --- Sealed-can snapshot ---
+            s_NewItemWasSealed = false;
+            if (newPlacedItem != null)
+            {
+                foreach (Transform t in newPlacedItem.GetComponentsInChildren<Transform>(true))
+                {
+                    if (t.name == "OBJ_CannedFood")
+                    {
+                        s_NewItemWasSealed = t.gameObject.activeSelf;
+                        break;
+                    }
+                }
+            }
+
             if (isRedirecting) return true;
 
             var hoveredSlot = PlayerManager_GetInteractiveObjectUnderCrosshairs_Patch.LastHoveredSlot;
@@ -165,18 +187,25 @@ namespace InterpoLoot
             {
                 InterpoLootMain.lastPlacedGearItem = placedGear; // Cache the actual root object on the stove
                 GameAudioManager.PlaySound("Play_ClothRustle", GameManager.GetPlayerObject());
-                InterpoLootMain.AnimateItemToSlot(placedGear.gameObject, __instance.transform.position, __instance.transform.rotation);
+                // Direct-hit is always a pot or non-food — no sealed-can logic needed.
+                InterpoLootMain.AnimateItemToSlot(placedGear.gameObject, __instance.transform.position, __instance.transform.rotation, false);
             }
             else if (isDummyHit)
             {
                 InterpoLootMain.lastPlacedGearItem = placedGear; // Cache the dummy as the core object
                 GameAudioManager.PlaySound("Play_ClothRustle", GameManager.GetPlayerObject());
+                newPlacedItem.PlayPickUpClip(); // FIX: raw food "pat" sound
 
                 // The magic trick: animate the FOOD (newPlacedItem), not the DUMMY!
-                // The dummy stays instantly snapped natively, but the food inside it 
-                // gets invisible-materialed and visually interpolated!
-                InterpoLootMain.AnimateItemToSlot(newPlacedItem.gameObject, newPlacedItem.transform.position, newPlacedItem.transform.rotation);
+                // Pass the pre-vanilla sealed state so the clone shows the right mesh.
+                InterpoLootMain.AnimateItemToSlot(newPlacedItem.gameObject, newPlacedItem.transform.position, newPlacedItem.transform.rotation, s_NewItemWasSealed);
             }
+        }
+
+        private static Exception Finalizer(Exception __exception)
+        {
+            activeDropAndPlaceCount--;
+            return __exception;
         }
     }
 
@@ -1000,23 +1029,32 @@ namespace InterpoLoot
         {
             isBreakingDown = true;
 
-            if (InterpoLootMain.lastCrosshairHitPosition != Vector3.zero)
+            // Wrap in try/finally so isBreakingDown can never get stuck true on exception.
+            // (Harmony calls Postfix regardless, but a throw here could skip the assignment.)
+            try
             {
-                breakDownPos = InterpoLootMain.lastCrosshairHitPosition;
-            }
-            else
-            {
-                breakDownPos = __instance.transform.position;
-            }
-
-            yieldPrefabToClone = null;
-            if (__instance.m_YieldObject != null && __instance.m_YieldObject.Count > 0)
-            {
-                GameObject yieldObj = __instance.m_YieldObject[0];
-                if (yieldObj != null)
+                if (InterpoLootMain.lastCrosshairHitPosition != Vector3.zero)
                 {
-                    yieldPrefabToClone = yieldObj.GetComponent<GearItem>();
+                    breakDownPos = InterpoLootMain.lastCrosshairHitPosition;
                 }
+                else
+                {
+                    breakDownPos = __instance.transform.position;
+                }
+
+                yieldPrefabToClone = null;
+                if (__instance.m_YieldObject != null && __instance.m_YieldObject.Count > 0)
+                {
+                    GameObject yieldObj = __instance.m_YieldObject[0];
+                    if (yieldObj != null)
+                        yieldPrefabToClone = yieldObj.GetComponent<GearItem>();
+                }
+            }
+            catch (System.Exception ex)
+            {
+                MelonLoader.MelonLogger.Warning($"[InterpoLoot] BreakDown Prefix error: {ex.Message}");
+                isBreakingDown = false; // ensure we don't silence pickup sounds permanently
+                yieldPrefabToClone = null;
             }
         }
 
@@ -1153,6 +1191,64 @@ namespace InterpoLoot
 
                 TransferManager.pendingItem = null;
             }
+        }
+    }
+
+    // Patches CookingPotItem.StartCooking instead of Panel_Cooking.OnDoAction.
+    // StartCooking fires ONLY when food genuinely begins cooking in the pot — not for eating,
+    // removing, or any other panel action — so there are no false-positive conflicts.
+    // The Prefix snapshots the sealed state of the food before StartCooking can call
+    // MaybeFlagItemAsOpened on it.
+    [HarmonyPatch(typeof(Il2Cpp.CookingPotItem), nameof(Il2Cpp.CookingPotItem.StartCooking))]
+    internal class CookingPotItem_StartCooking_Patch
+    {
+        // Sealed state read BEFORE vanilla has a chance to open the can.
+        private static bool s_FoodWasSealed = false;
+
+        private static void Prefix(Il2Cpp.CookingPotItem __instance)
+        {
+            s_FoodWasSealed = false;
+
+            // m_GearItemBeingCooked may already be set if the pot is being restarted, or it may be
+            // set inside StartCooking itself.  We snapshot whichever food we can access right now.
+            GearItem food = __instance.m_GearItemBeingCooked;
+            if (food == null) return;
+
+            foreach (Transform t in food.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name == "OBJ_CannedFood")
+                {
+                    s_FoodWasSealed = t.gameObject.activeSelf;
+                    break;
+                }
+            }
+        }
+
+        private static void Postfix(Il2Cpp.CookingPotItem __instance)
+        {
+            if (InterpoLootMain.isAnimatingPlacement || InterpoLootMain.isAnimatingCookingPotPlacement)
+                return;
+
+            if (GearPlacePoint_DropAndPlaceItem_Patch.activeDropAndPlaceCount > 0)
+                return; // Prevent duplicate animation when placing raw food directly on a stove
+
+            // Only animate for pots that are actually on a fire / gear-place-point.
+            bool isOnFire = (__instance.m_GearPlacePointAttachedTo != null || __instance.m_FireBeingUsed != null);
+            if (!isOnFire) return;
+
+            GearItem foodItem = __instance.m_GearItemBeingCooked;
+            if (foodItem == null) return;
+
+            // Tactile sound feedback.
+            foodItem.PlayPickUpClip();
+            GameAudioManager.PlaySound("Play_ClothRustle", GameManager.GetPlayerObject());
+
+            // Fly a clone from pocket to the food's resting position inside the pot.
+            Vector3 startPos = InterpoLootMain.GetPocketPosition();
+            Vector3 finalPos = foodItem.transform.position;
+            UnityEngine.Quaternion finalRot = foodItem.transform.rotation;
+
+            InterpoLootMain.AnimateCookingPotPlacement(foodItem.gameObject, startPos, finalPos, finalRot, s_FoodWasSealed);
         }
     }
 }

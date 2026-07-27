@@ -18,6 +18,7 @@ namespace InterpoLoot
         public static bool isTakingItem = false;
         public static bool isEatingFromCookingSlot = false;
         public static bool isAnimatingPlacement = false;
+        public static bool isAnimatingCookingPotPlacement = false;
         public static bool isInspectingHarvestable = false;
         public static bool isInspectingCookingPot = false;
         public static float vanillaInteractRange = 2f;
@@ -45,7 +46,6 @@ namespace InterpoLoot
 
         public override void OnInitializeMelon()
         {
-            /* STREAMING_CHUNK:Initializing the main mod components... */
             MelonLogger.Msg("Initializing InterpoLoot...");
 
             MethodSniffer.PatchAll(this.HarmonyInstance);
@@ -60,7 +60,6 @@ namespace InterpoLoot
 
         public override void OnUpdate()
         {
-            /* STREAMING_CHUNK:Running the Hierarchy Dumper debugging tool... */
             // --- DEBUG: HIERARCHY DUMPER ---
             if (Input.GetKeyDown(KeyCode.F10))
             {
@@ -69,7 +68,6 @@ namespace InterpoLoot
 
             if (GameManager.m_IsPaused || GameManager.IsMainMenuActive()) return;
 
-            /* STREAMING_CHUNK:Scanning for UI transparencies... */
             // --- UI TRANSPARENCY SCANNER ---
             if (InterfaceManager.TryGetPanel<Panel_Container>(out var containerPanel))
             {
@@ -99,7 +97,6 @@ namespace InterpoLoot
             }
             // ------------------------------------
 
-            /* STREAMING_CHUNK:Handling input interaction logic... */
             PlayerManager pm = GameManager.GetPlayerManagerComponent();
             if (pm == null || (pm.GetControlMode() != PlayerControlMode.Normal && pm.GetControlMode() != PlayerControlMode.Locked && pm.GetControlMode() != PlayerControlMode.InVehicle)) return;
 
@@ -153,7 +150,6 @@ namespace InterpoLoot
             }
         }
 
-        /* STREAMING_CHUNK:Defining the Hierarchy Dumper functionality... */
         private void DumpCrosshairHierarchy()
         {
             PlayerManager pm = GameManager.GetPlayerManagerComponent();
@@ -177,7 +173,6 @@ namespace InterpoLoot
                 }
             }
 
-            // Try to find the root of the stove/fire/gear item to dump the whole tree
             Transform top = crosshairObj.transform;
             Il2Cpp.Fire fire = crosshairObj.GetComponentInParent<Il2Cpp.Fire>();
 
@@ -191,7 +186,6 @@ namespace InterpoLoot
                 if (gi != null) top = gi.transform;
             }
 
-            // Fallback: Just go up a few levels if we didn't find a component root
             if (fire == null && crosshairObj.GetComponentInParent<GearItem>() == null)
             {
                 int maxClimb = 3;
@@ -237,7 +231,6 @@ namespace InterpoLoot
             }
         }
 
-        /* STREAMING_CHUNK:Defining standard vanilla interactions... */
         public static bool ShouldLetVanillaHandleInteraction(GearItem gearItem)
         {
             if (gearItem == null) return false;
@@ -283,8 +276,7 @@ namespace InterpoLoot
             return false;
         }
 
-        /* STREAMING_CHUNK:Cloning the object mesh for interpolation... */
-        public static GameObject CreateVisualClone(GameObject sourceObject, string cloneName = "VisualClone")
+        public static GameObject CreateVisualClone(GameObject sourceObject, string cloneName = "VisualClone", bool forceSealed = false)
         {
             if (sourceObject == null) return null;
             GameObject clone = new GameObject(cloneName);
@@ -296,12 +288,42 @@ namespace InterpoLoot
 
             ClothingItem clothing = sourceObject.GetComponent<ClothingItem>();
 
+            bool isCannedFood = false;
+            Transform objCannedFood = null;
+            Transform openedMesh = null;
+
+            foreach (Transform t in sourceObject.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name == "OBJ_CannedFood") objCannedFood = t;
+                if (t.name == "OpenedMesh") openedMesh = t;
+            }
+
+            if (objCannedFood != null && openedMesh != null)
+            {
+                isCannedFood = true;
+            }
+
+            bool effectivelySealed = forceSealed;
+            if (isCannedFood && !forceSealed)
+            {
+                effectivelySealed = objCannedFood.gameObject.activeSelf;
+            }
+
             foreach (MeshRenderer originalRenderer in sourceObject.GetComponentsInChildren<MeshRenderer>(true))
             {
                 if (clothing != null)
                 {
                     if (originalRenderer.transform.parent != null && originalRenderer.transform.parent.name == "MeshInspectMode") continue;
                     if (originalRenderer.name == "MeshInspectMode") continue;
+                }
+
+                if (isCannedFood)
+                {
+                    bool isSealedPart = (originalRenderer.transform == objCannedFood) || originalRenderer.name.Contains("OBJ_CannedFood");
+                    bool isOpenedPart = (originalRenderer.transform == openedMesh) || originalRenderer.transform.IsChildOf(openedMesh) || originalRenderer.name.Contains("Can_Liquid") || originalRenderer.name.Contains("CannedBeansUsed");
+
+                    if (effectivelySealed && isOpenedPart) continue; // Skip opened meshes if we want the sealed look
+                    if (!effectivelySealed && isSealedPart) continue; // Skip sealed meshes if we want the opened look
                 }
 
                 MeshFilter originalFilter = originalRenderer.GetComponent<MeshFilter>();
@@ -322,6 +344,10 @@ namespace InterpoLoot
                     mr.enabled = originalRenderer.enabled;
 
                     if (clothing != null && (originalRenderer.name == "Mesh" || (originalRenderer.transform.parent != null && originalRenderer.transform.parent.name == "Mesh")))
+                    {
+                        child.SetActive(true);
+                    }
+                    else if (isCannedFood)
                     {
                         child.SetActive(true);
                     }
@@ -348,7 +374,6 @@ namespace InterpoLoot
             return clone;
         }
 
-        /* STREAMING_CHUNK:Managing radial consumption logic... */
         public static void StartRadialConsumptionAnimation(GearItem gearItem, bool reopenInventory = false, System.Action onComplete = null, string customPrefab = null)
         {
             MelonCoroutines.Start(RadialConsumptionCoroutine(gearItem, reopenInventory, onComplete, customPrefab));
@@ -458,7 +483,6 @@ namespace InterpoLoot
             if (cloneObj.GetComponent<Rigidbody>() != null) UnityEngine.Object.Destroy(cloneObj.GetComponent<Rigidbody>());
             foreach (Collider c in cloneObj.GetComponentsInChildren<Collider>(true)) UnityEngine.Object.Destroy(c);
 
-            /* STREAMING_CHUNK:Animating radial interaction phase 1... */
             while (time < duration)
             {
                 if (gearItem == null || gearItem.gameObject == null) yield break;
@@ -481,7 +505,6 @@ namespace InterpoLoot
 
             yield return new UnityEngine.WaitForSeconds(0.15f);
 
-            /* STREAMING_CHUNK:Animating radial interaction phase 2... */
             Vector3 endPos = cameraTransform.position + (-cameraTransform.up * 0.50f);
             time = 0f;
             duration = 0.25f;
@@ -538,7 +561,6 @@ namespace InterpoLoot
             }
         }
 
-        /* STREAMING_CHUNK:Managing quick loot animations... */
         public static void StartQuickLootAnimation(GameObject sourceObject, GearItem originalGear = null, Action onComplete = null, Vector3? overrideStartPos = null, Vector3? startScale = null, Vector3? targetScale = null, UnityEngine.Quaternion? overrideStartRot = null, Vector3? overrideTargetPos = null, bool bypassHashSet = false)
         {
             if (sourceObject == null) return;
@@ -585,7 +607,7 @@ namespace InterpoLoot
 
             Utils.SetObjectAndChildrenLayer(cloneObj, 2, 0);
 
-            float duration = 0.5f;
+            float duration = 0.5f / 1.2f;
             float time = 0f;
 
             cloneObj.transform.position = startPos;
@@ -607,9 +629,9 @@ namespace InterpoLoot
             {
                 if (cloneObj == null) yield break;
                 time += Time.deltaTime;
-                float t = time / duration;
 
-                t = 1f - Mathf.Pow(1f - t, 3f);
+                float rawT = time / duration;
+                float t = rawT * rawT * (3f - 2f * rawT);
 
                 Vector3 targetPos;
                 if (overrideTargetPos.HasValue)
@@ -631,7 +653,7 @@ namespace InterpoLoot
                 Vector3 currentPos = Vector3.Lerp(adjustedStartPos, adjustedTargetPos, t);
 
                 float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
-                currentPos += -cameraTransform.up * arc;
+                currentPos += Vector3.down * arc;
 
                 cloneObj.transform.position = currentPos;
 
@@ -655,7 +677,6 @@ namespace InterpoLoot
             }
         }
 
-        /* STREAMING_CHUNK:Managing Inspect Lerp interactions... */
         public static void StartInspectLerpCoroutine(GearItem gearItem, Vector3 startPos)
         {
             MelonCoroutines.Start(InspectLerpCoroutine(gearItem, startPos));
@@ -669,7 +690,7 @@ namespace InterpoLoot
 
             Vector3 localCenterOffset = GetCenterOffset(gearItem.gameObject);
 
-            float duration = 0.3f;
+            float duration = 0.3f / 1.2f;
             float time = 0f;
             Transform cameraTransform = GameManager.GetMainCamera().transform;
 
@@ -678,15 +699,17 @@ namespace InterpoLoot
             while (time < duration)
             {
                 time += Time.deltaTime;
-                float t = time / duration;
-                t = 1f - Mathf.Pow(1f - t, 3f);
+
+                float rawT = time / duration;
+                float t = rawT * rawT * (3f - 2f * rawT);
 
                 Vector3 worldOffset = gearItem.transform.TransformVector(localCenterOffset);
                 Vector3 adjustedTargetPos = targetPos - worldOffset;
 
                 Vector3 currentPos = Vector3.Lerp(startPos, adjustedTargetPos, t);
+
                 float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
-                currentPos += -cameraTransform.up * arc;
+                currentPos += Vector3.down * arc;
 
                 gearItem.transform.position = currentPos;
                 yield return null;
@@ -695,80 +718,99 @@ namespace InterpoLoot
             interpolatingItems.Remove(gearItem.gameObject);
         }
 
-        /* STREAMING_CHUNK:Managing slot placement animations... */
-        public static void AnimateItemToSlot(GameObject originalObj, Vector3 finalPos, UnityEngine.Quaternion finalRot)
+        public static void AnimateItemToSlot(GameObject originalObj, Vector3 finalPos, UnityEngine.Quaternion finalRot, bool forceSealed = false)
         {
             if (originalObj == null || GameManager.GetMainCamera() == null) return;
             InterpoLootMain.isAnimatingPlacement = true;
+            MelonCoroutines.Start(PlacementCoroutineObj(originalObj, finalPos, finalRot, forceSealed));
+        }
+
+        private static System.Collections.IEnumerator PlacementCoroutineObj(GameObject originalObj, Vector3 finalPos, UnityEngine.Quaternion finalRot, bool initialForceSealed)
+        {
+            Material invisMat = new Material(Shader.Find("UI/Default"));
+            invisMat.color = new Color(0, 0, 0, 0);
+
+            MeshRenderer[] realRenderers = originalObj != null
+                ? originalObj.GetComponentsInChildren<MeshRenderer>(true)
+                : new MeshRenderer[0];
+            Material[][] savedMats = new Material[realRenderers.Length][];
+
+            for (int i = 0; i < realRenderers.Length; i++)
+            {
+                savedMats[i] = realRenderers[i].sharedMaterials;
+                Material[] blanks = new Material[realRenderers[i].sharedMaterials.Length];
+                for (int j = 0; j < blanks.Length; j++) blanks[j] = invisMat;
+                realRenderers[i].sharedMaterials = blanks;
+                realRenderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+
+            // WAIT 1 FRAME to allow vanilla's synchronous UI logic (like starting the radial progress bar) to finish
+            yield return null;
+
+            if (originalObj == null) yield break;
+
+            bool forceSealed = initialForceSealed;
+            if (InterfaceManager.TryGetPanel<Panel_GenericProgressBar>(out var pb) && pb.isActiveAndEnabled)
+            {
+                forceSealed = true; // Vanilla just started the "Opening..." radial, so it MUST have been sealed!
+            }
+
+            // Temporarily restore the real materials so CreateVisualClone doesn't copy clear textures!
+            for (int i = 0; i < realRenderers.Length; i++)
+            {
+                if (realRenderers[i] != null) realRenderers[i].sharedMaterials = savedMats[i];
+            }
 
             Transform camTransform = GameManager.GetMainCamera().transform;
             Vector3 startPos = InterpoLootMain.GetPocketPosition();
             UnityEngine.Quaternion startRot = camTransform.rotation;
 
             GearItem gear = originalObj.GetComponent<GearItem>();
-            GameObject clone = CreateVisualClone(gear != null ? gear.gameObject : originalObj, "PlacementVisualClone");
+            GameObject clone = CreateVisualClone(gear != null ? gear.gameObject : originalObj, "PlacementVisualClone", forceSealed);
 
-            Bounds bounds = new Bounds(Vector3.zero, Vector3.zero);
-            bool hasBounds = false;
-            foreach (MeshRenderer m in clone.GetComponentsInChildren<MeshRenderer>(true))
+            // Immediately re-hide the real item before Unity even renders the frame
+            for (int i = 0; i < realRenderers.Length; i++)
             {
-                if (!hasBounds) { bounds = m.bounds; hasBounds = true; }
-                else { bounds.Encapsulate(m.bounds); }
-            }
-            float dynamicOffset = hasBounds ? Mathf.Max(bounds.extents.x, bounds.extents.y, bounds.extents.z) : 0f;
-            dynamicOffset = Mathf.Clamp(dynamicOffset, 0f, 1.0f);
-
-            startPos += camTransform.up * -dynamicOffset;
-
-            clone.transform.position = startPos;
-            clone.transform.rotation = startRot;
-            clone.SetActive(true);
-
-            MelonCoroutines.Start(PlacementCoroutineObj(clone, originalObj, startPos, startRot, finalPos, finalRot));
-        }
-
-        private static System.Collections.IEnumerator PlacementCoroutineObj(GameObject clone, GameObject originalObj, Vector3 startPos, UnityEngine.Quaternion startRot, Vector3 finalPos, UnityEngine.Quaternion finalRot)
-        {
-            if (originalObj != null)
-            {
-                originalObj.transform.position = finalPos;
-                originalObj.transform.rotation = finalRot;
+                if (realRenderers[i] != null)
+                {
+                    Material[] blanks = new Material[realRenderers[i].sharedMaterials.Length];
+                    for (int j = 0; j < blanks.Length; j++) blanks[j] = invisMat;
+                    realRenderers[i].sharedMaterials = blanks;
+                }
             }
 
-            Material invisMat = new Material(Shader.Find("UI/Default"));
-            invisMat.color = new Color(0, 0, 0, 0);
-
-            MeshRenderer[] realRenderers = originalObj != null ? originalObj.GetComponentsInChildren<MeshRenderer>(true) : new MeshRenderer[0];
-            System.Collections.Generic.Dictionary<MeshRenderer, Material[]> originalMats = new System.Collections.Generic.Dictionary<MeshRenderer, Material[]>();
-
-            foreach (MeshRenderer r in realRenderers)
+            if (clone != null)
             {
-                originalMats[r] = r.sharedMaterials;
+                Bounds bounds = new Bounds(Vector3.zero, Vector3.zero);
+                bool hasBounds = false;
+                foreach (MeshRenderer m in clone.GetComponentsInChildren<MeshRenderer>(true))
+                {
+                    if (!hasBounds) { bounds = m.bounds; hasBounds = true; }
+                    else { bounds.Encapsulate(m.bounds); }
+                }
+                float dynamicOffset = hasBounds ? Mathf.Max(bounds.extents.x, bounds.extents.y, bounds.extents.z) : 0f;
+                dynamicOffset = Mathf.Clamp(dynamicOffset, 0f, 1.0f);
 
-                Material[] blankMats = new Material[r.sharedMaterials.Length];
-                for (int i = 0; i < blankMats.Length; i++) blankMats[i] = invisMat;
+                startPos += camTransform.up * -dynamicOffset;
 
-                r.sharedMaterials = blankMats;
-                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                clone.transform.position = startPos;
+                clone.transform.rotation = startRot;
+                clone.SetActive(true);
             }
 
-            float duration = 0.5f;
+            float duration = 0.5f / 1.2f;
             float elapsed = 0f;
 
             while (elapsed < duration)
             {
                 if (clone != null)
                 {
-                    float t = elapsed / duration;
-                    float easeT = 1f - UnityEngine.Mathf.Pow(1f - t, 3f);
+                    float rawT = elapsed / duration;
+                    float easeT = rawT * rawT * (3f - 2f * rawT);
 
                     Vector3 currentPos = Vector3.Lerp(startPos, finalPos, easeT);
-
-                    if (GameManager.GetMainCamera() != null)
-                    {
-                        float arc = UnityEngine.Mathf.Sin(easeT * UnityEngine.Mathf.PI) * 0.05f;
-                        currentPos += -GameManager.GetMainCamera().transform.up * arc;
-                    }
+                    float arc = UnityEngine.Mathf.Sin(easeT * UnityEngine.Mathf.PI) * 0.05f;
+                    currentPos += UnityEngine.Vector3.down * arc;
 
                     clone.transform.position = currentPos;
                     clone.transform.rotation = UnityEngine.Quaternion.Slerp(startRot, finalRot, easeT);
@@ -778,23 +820,20 @@ namespace InterpoLoot
             }
 
             if (clone != null)
-            {
                 UnityEngine.Object.Destroy(clone);
-            }
 
-            foreach (MeshRenderer r in realRenderers)
+            for (int i = 0; i < realRenderers.Length; i++)
             {
-                if (r != null && originalMats.ContainsKey(r))
+                if (realRenderers[i] != null)
                 {
-                    r.sharedMaterials = originalMats[r];
-                    r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                    realRenderers[i].sharedMaterials = savedMats[i];
+                    realRenderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
                 }
             }
 
             InterpoLootMain.isAnimatingPlacement = false;
         }
 
-        /* STREAMING_CHUNK:Managing yielding mechanics... */
         public static void SpawnSimulatedYieldClone(GearItem yieldPrefab, Vector3 spawnPos)
         {
             if (yieldPrefab == null) return;
@@ -846,19 +885,19 @@ namespace InterpoLoot
 
         private static IEnumerator FirePlacementCoroutine(GameObject clone, Vector3 startPos, UnityEngine.Quaternion startRot, Vector3 targetPos)
         {
-            float duration = 0.25f;
+            float duration = 0.25f / 1.2f;
             float elapsed = 0f;
 
             while (elapsed < duration)
             {
                 if (clone != null)
                 {
-                    float t = elapsed / duration;
-                    float easeT = t * t * (3f - 2f * t);
+                    float rawT = elapsed / duration;
+                    float easeT = rawT * rawT * (3f - 2f * rawT);
 
                     Vector3 currentPos = Vector3.Lerp(startPos, targetPos, easeT);
-                    float arc = Mathf.Sin(easeT * Mathf.PI) * 0.1f;
-                    currentPos += Vector3.up * arc;
+                    float arc = Mathf.Sin(easeT * Mathf.PI) * 0.05f;
+                    currentPos += Vector3.down * arc;
 
                     clone.transform.position = currentPos;
                 }
@@ -870,6 +909,109 @@ namespace InterpoLoot
             {
                 UnityEngine.Object.Destroy(clone);
             }
+        }
+
+        public static void AnimateCookingPotPlacement(GameObject foodObj, Vector3 startPos,
+                                                       Vector3 finalPos, UnityEngine.Quaternion finalRot,
+                                                       bool forceSealed = false)
+        {
+            if (foodObj == null || GameManager.GetMainCamera() == null) return;
+            isAnimatingCookingPotPlacement = true;
+
+            MelonCoroutines.Start(CookingPotPlacementCoroutine(foodObj, startPos, finalPos, finalRot, forceSealed));
+        }
+
+        private static System.Collections.IEnumerator CookingPotPlacementCoroutine(
+            GameObject foodObj, Vector3 startPos, Vector3 finalPos, UnityEngine.Quaternion finalRot, bool initialForceSealed)
+        {
+            Material invisMat = new Material(Shader.Find("UI/Default"));
+            invisMat.color = new Color(0, 0, 0, 0);
+
+            MeshRenderer[] realRenderers = foodObj.GetComponentsInChildren<MeshRenderer>(true);
+            Material[][] savedMats = new Material[realRenderers.Length][];
+
+            for (int i = 0; i < realRenderers.Length; i++)
+            {
+                savedMats[i] = realRenderers[i].sharedMaterials;
+                Material[] blanks = new Material[realRenderers[i].sharedMaterials.Length];
+                for (int j = 0; j < blanks.Length; j++) blanks[j] = invisMat;
+                realRenderers[i].sharedMaterials = blanks;
+                realRenderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+
+            // WAIT 1 FRAME to allow vanilla's synchronous UI logic (like starting the radial progress bar) to finish
+            yield return null;
+
+            if (foodObj == null) yield break;
+
+            bool forceSealed = initialForceSealed;
+            if (InterfaceManager.TryGetPanel<Panel_GenericProgressBar>(out var pb) && pb.isActiveAndEnabled)
+            {
+                forceSealed = true; // Vanilla just started the "Opening..." radial, so it MUST have been sealed!
+            }
+
+            // Temporarily restore the real materials so CreateVisualClone doesn't copy clear textures!
+            for (int i = 0; i < realRenderers.Length; i++)
+            {
+                if (realRenderers[i] != null) realRenderers[i].sharedMaterials = savedMats[i];
+            }
+
+            GameObject clone = CreateVisualClone(foodObj, "CookingPotVisualClone", forceSealed);
+
+            // Immediately re-hide the real item before Unity even renders the frame
+            for (int i = 0; i < realRenderers.Length; i++)
+            {
+                if (realRenderers[i] != null)
+                {
+                    Material[] blanks = new Material[realRenderers[i].sharedMaterials.Length];
+                    for (int j = 0; j < blanks.Length; j++) blanks[j] = invisMat;
+                    realRenderers[i].sharedMaterials = blanks;
+                }
+            }
+
+            if (clone != null)
+            {
+                clone.transform.position = startPos;
+                clone.transform.rotation = GameManager.GetMainCamera().transform.rotation;
+                clone.SetActive(true);
+                Utils.SetObjectAndChildrenLayer(clone, 2, 0);
+            }
+
+            float duration = 0.5f / 1.2f;
+            float elapsed = 0f;
+            Transform cam = GameManager.GetMainCamera().transform;
+            UnityEngine.Quaternion startRot = cam.rotation;
+
+            while (elapsed < duration)
+            {
+                if (clone != null)
+                {
+                    float rawT = elapsed / duration;
+                    float easeT = rawT * rawT * (3f - 2f * rawT);
+
+                    Vector3 pos = UnityEngine.Vector3.Lerp(startPos, finalPos, easeT);
+                    float arc = UnityEngine.Mathf.Sin(easeT * UnityEngine.Mathf.PI) * 0.05f;
+                    pos += UnityEngine.Vector3.down * arc;
+
+                    clone.transform.position = pos;
+                    clone.transform.rotation = UnityEngine.Quaternion.Slerp(startRot, finalRot, easeT);
+                }
+                elapsed += UnityEngine.Time.deltaTime;
+                yield return null;
+            }
+
+            if (clone != null) UnityEngine.Object.Destroy(clone);
+
+            for (int i = 0; i < realRenderers.Length; i++)
+            {
+                if (realRenderers[i] != null)
+                {
+                    realRenderers[i].sharedMaterials = savedMats[i];
+                    realRenderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                }
+            }
+
+            isAnimatingCookingPotPlacement = false;
         }
     }
 }
