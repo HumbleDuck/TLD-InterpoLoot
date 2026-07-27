@@ -879,7 +879,8 @@ namespace InterpoLoot
 
         private static IEnumerator FirePlacementCoroutine(GameObject clone, Vector3 startPos, UnityEngine.Quaternion startRot, Vector3 targetPos)
         {
-            float duration = 0.25f / 1.2f;
+            // Duration matched to other placement animations (0.5f / 1.2f)
+            float duration = 0.5f / 1.2f;
             float elapsed = 0f;
 
             while (elapsed < duration)
