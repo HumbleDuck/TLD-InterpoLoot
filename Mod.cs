@@ -727,27 +727,30 @@ namespace InterpoLoot
 
         private static System.Collections.IEnumerator PlacementCoroutineObj(GameObject originalObj, Vector3 finalPos, UnityEngine.Quaternion finalRot, bool initialForceSealed)
         {
-            Material invisMat = new Material(Shader.Find("UI/Default"));
-            invisMat.color = new Color(0, 0, 0, 0);
-
             MeshRenderer[] realRenderers = originalObj != null
                 ? originalObj.GetComponentsInChildren<MeshRenderer>(true)
                 : new MeshRenderer[0];
-            Material[][] savedMats = new Material[realRenderers.Length][];
 
+            bool[] savedEnabled = new bool[realRenderers.Length];
+
+            // Renderers are immediately disabled to prevent rendering
             for (int i = 0; i < realRenderers.Length; i++)
             {
-                savedMats[i] = realRenderers[i].sharedMaterials;
-                Material[] blanks = new Material[realRenderers[i].sharedMaterials.Length];
-                for (int j = 0; j < blanks.Length; j++) blanks[j] = invisMat;
-                realRenderers[i].sharedMaterials = blanks;
-                realRenderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                if (realRenderers[i] != null)
+                {
+                    savedEnabled[i] = realRenderers[i].enabled;
+                    realRenderers[i].enabled = false;
+                }
             }
 
             // WAIT 1 FRAME to allow vanilla's synchronous UI logic (like starting the radial progress bar) to finish
             yield return null;
 
-            if (originalObj == null) yield break;
+            if (originalObj == null)
+            {
+                InterpoLootMain.isAnimatingPlacement = false;
+                yield break;
+            }
 
             bool forceSealed = initialForceSealed;
             if (InterfaceManager.TryGetPanel<Panel_GenericProgressBar>(out var pb) && pb.isActiveAndEnabled)
@@ -755,10 +758,10 @@ namespace InterpoLoot
                 forceSealed = true; // Vanilla just started the "Opening..." radial, so it MUST have been sealed!
             }
 
-            // Temporarily restore the real materials so CreateVisualClone doesn't copy clear textures!
+            // Temporarily restore the enabled state so CreateVisualClone copies visible geometry!
             for (int i = 0; i < realRenderers.Length; i++)
             {
-                if (realRenderers[i] != null) realRenderers[i].sharedMaterials = savedMats[i];
+                if (realRenderers[i] != null) realRenderers[i].enabled = savedEnabled[i];
             }
 
             Transform camTransform = GameManager.GetMainCamera().transform;
@@ -768,15 +771,10 @@ namespace InterpoLoot
             GearItem gear = originalObj.GetComponent<GearItem>();
             GameObject clone = CreateVisualClone(gear != null ? gear.gameObject : originalObj, "PlacementVisualClone", forceSealed);
 
-            // Immediately re-hide the real item before Unity even renders the frame
+            // Instantly re-hide the real item before Unity even renders the frame
             for (int i = 0; i < realRenderers.Length; i++)
             {
-                if (realRenderers[i] != null)
-                {
-                    Material[] blanks = new Material[realRenderers[i].sharedMaterials.Length];
-                    for (int j = 0; j < blanks.Length; j++) blanks[j] = invisMat;
-                    realRenderers[i].sharedMaterials = blanks;
-                }
+                if (realRenderers[i] != null) realRenderers[i].enabled = false;
             }
 
             if (clone != null)
@@ -824,11 +822,7 @@ namespace InterpoLoot
 
             for (int i = 0; i < realRenderers.Length; i++)
             {
-                if (realRenderers[i] != null)
-                {
-                    realRenderers[i].sharedMaterials = savedMats[i];
-                    realRenderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
-                }
+                if (realRenderers[i] != null) realRenderers[i].enabled = savedEnabled[i];
             }
 
             InterpoLootMain.isAnimatingPlacement = false;
@@ -924,25 +918,27 @@ namespace InterpoLoot
         private static System.Collections.IEnumerator CookingPotPlacementCoroutine(
             GameObject foodObj, Vector3 startPos, Vector3 finalPos, UnityEngine.Quaternion finalRot, bool initialForceSealed)
         {
-            Material invisMat = new Material(Shader.Find("UI/Default"));
-            invisMat.color = new Color(0, 0, 0, 0);
-
             MeshRenderer[] realRenderers = foodObj.GetComponentsInChildren<MeshRenderer>(true);
-            Material[][] savedMats = new Material[realRenderers.Length][];
+            bool[] savedEnabled = new bool[realRenderers.Length];
 
+            // Renderers are immediately disabled to prevent rendering (ignores vanilla material swaps!)
             for (int i = 0; i < realRenderers.Length; i++)
             {
-                savedMats[i] = realRenderers[i].sharedMaterials;
-                Material[] blanks = new Material[realRenderers[i].sharedMaterials.Length];
-                for (int j = 0; j < blanks.Length; j++) blanks[j] = invisMat;
-                realRenderers[i].sharedMaterials = blanks;
-                realRenderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                if (realRenderers[i] != null)
+                {
+                    savedEnabled[i] = realRenderers[i].enabled;
+                    realRenderers[i].enabled = false;
+                }
             }
 
             // WAIT 1 FRAME to allow vanilla's synchronous UI logic (like starting the radial progress bar) to finish
             yield return null;
 
-            if (foodObj == null) yield break;
+            if (foodObj == null)
+            {
+                InterpoLootMain.isAnimatingCookingPotPlacement = false;
+                yield break;
+            }
 
             bool forceSealed = initialForceSealed;
             if (InterfaceManager.TryGetPanel<Panel_GenericProgressBar>(out var pb) && pb.isActiveAndEnabled)
@@ -950,23 +946,18 @@ namespace InterpoLoot
                 forceSealed = true; // Vanilla just started the "Opening..." radial, so it MUST have been sealed!
             }
 
-            // Temporarily restore the real materials so CreateVisualClone doesn't copy clear textures!
+            // Temporarily restore the enabled state so CreateVisualClone copies visible geometry!
             for (int i = 0; i < realRenderers.Length; i++)
             {
-                if (realRenderers[i] != null) realRenderers[i].sharedMaterials = savedMats[i];
+                if (realRenderers[i] != null) realRenderers[i].enabled = savedEnabled[i];
             }
 
             GameObject clone = CreateVisualClone(foodObj, "CookingPotVisualClone", forceSealed);
 
-            // Immediately re-hide the real item before Unity even renders the frame
+            // Instantly re-hide the real item before Unity even renders the frame
             for (int i = 0; i < realRenderers.Length; i++)
             {
-                if (realRenderers[i] != null)
-                {
-                    Material[] blanks = new Material[realRenderers[i].sharedMaterials.Length];
-                    for (int j = 0; j < blanks.Length; j++) blanks[j] = invisMat;
-                    realRenderers[i].sharedMaterials = blanks;
-                }
+                if (realRenderers[i] != null) realRenderers[i].enabled = false;
             }
 
             if (clone != null)
@@ -1004,11 +995,7 @@ namespace InterpoLoot
 
             for (int i = 0; i < realRenderers.Length; i++)
             {
-                if (realRenderers[i] != null)
-                {
-                    realRenderers[i].sharedMaterials = savedMats[i];
-                    realRenderers[i].shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
-                }
+                if (realRenderers[i] != null) realRenderers[i].enabled = savedEnabled[i];
             }
 
             isAnimatingCookingPotPlacement = false;
