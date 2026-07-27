@@ -647,13 +647,12 @@ namespace InterpoLoot
                 Vector3 worldOffset = cloneObj.transform.TransformVector(localCenterOffset);
                 Vector3 adjustedTargetPos = targetPos - worldOffset;
 
-                Vector3 initialWorldOffset = cloneObj.transform.TransformVector(localCenterOffset);
-                Vector3 adjustedStartPos = startPos - initialWorldOffset;
+                // FIX: Lerp cleanly from true start position so clone doesn't teleport
+                Vector3 currentPos = Vector3.Lerp(startPos, adjustedTargetPos, t);
 
-                Vector3 currentPos = Vector3.Lerp(adjustedStartPos, adjustedTargetPos, t);
-
-                float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
-                currentPos += Vector3.down * arc;
+                // Pickup S-Curve: Upwards lift in first half, downward slope in second half
+                float sCurve = Mathf.Sin(t * Mathf.PI * 2f) * 0.05f;
+                currentPos += Vector3.up * sCurve;
 
                 cloneObj.transform.position = currentPos;
 
@@ -708,8 +707,9 @@ namespace InterpoLoot
 
                 Vector3 currentPos = Vector3.Lerp(startPos, adjustedTargetPos, t);
 
-                float arc = Mathf.Sin(t * Mathf.PI) * 0.05f;
-                currentPos += Vector3.down * arc;
+                // Inspect S-Curve: Upwards lift then settles
+                float sCurve = Mathf.Sin(t * Mathf.PI * 2f) * 0.05f;
+                currentPos += Vector3.up * sCurve;
 
                 gearItem.transform.position = currentPos;
                 yield return null;
@@ -807,8 +807,10 @@ namespace InterpoLoot
                     float easeT = rawT * rawT * (3f - 2f * rawT);
 
                     Vector3 currentPos = Vector3.Lerp(startPos, finalPos, easeT);
-                    float arc = UnityEngine.Mathf.Sin(easeT * UnityEngine.Mathf.PI) * 0.05f;
-                    currentPos += UnityEngine.Vector3.down * arc;
+
+                    // Placement Inverted S-Curve: Dips first, hops up at the end, then plops
+                    float sCurve = UnityEngine.Mathf.Sin(easeT * UnityEngine.Mathf.PI * 2f) * 0.05f;
+                    currentPos += UnityEngine.Vector3.down * sCurve;
 
                     clone.transform.position = currentPos;
                     clone.transform.rotation = UnityEngine.Quaternion.Slerp(startRot, finalRot, easeT);
@@ -879,7 +881,6 @@ namespace InterpoLoot
 
         private static IEnumerator FirePlacementCoroutine(GameObject clone, Vector3 startPos, UnityEngine.Quaternion startRot, Vector3 targetPos)
         {
-            // Duration matched to other placement animations (0.5f / 1.2f)
             float duration = 0.5f / 1.2f;
             float elapsed = 0f;
 
@@ -891,8 +892,10 @@ namespace InterpoLoot
                     float easeT = rawT * rawT * (3f - 2f * rawT);
 
                     Vector3 currentPos = Vector3.Lerp(startPos, targetPos, easeT);
-                    float arc = Mathf.Sin(easeT * Mathf.PI) * 0.05f;
-                    currentPos += Vector3.down * arc;
+
+                    // Placement Inverted S-Curve: Dips first, hops up at the end, then plops
+                    float sCurve = Mathf.Sin(easeT * Mathf.PI * 2f) * 0.05f;
+                    currentPos += Vector3.down * sCurve;
 
                     clone.transform.position = currentPos;
                 }
@@ -982,8 +985,10 @@ namespace InterpoLoot
                     float easeT = rawT * rawT * (3f - 2f * rawT);
 
                     Vector3 pos = UnityEngine.Vector3.Lerp(startPos, finalPos, easeT);
-                    float arc = UnityEngine.Mathf.Sin(easeT * UnityEngine.Mathf.PI) * 0.05f;
-                    pos += UnityEngine.Vector3.down * arc;
+
+                    // Placement Inverted S-Curve: Dips first, hops up at the end, then plops
+                    float sCurve = UnityEngine.Mathf.Sin(easeT * UnityEngine.Mathf.PI * 2f) * 0.05f;
+                    pos += UnityEngine.Vector3.down * sCurve;
 
                     clone.transform.position = pos;
                     clone.transform.rotation = UnityEngine.Quaternion.Slerp(startRot, finalRot, easeT);
