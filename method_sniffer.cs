@@ -2,70 +2,59 @@ using HarmonyLib;
 using Il2Cpp;
 using MelonLoader;
 using System.Reflection;
-using System.Collections.Concurrent;
 
 namespace InterpoLoot
 {
     public static class MethodSniffer
     {
-        private static ConcurrentDictionary<string, int> methodCallCounts = new ConcurrentDictionary<string, int>();
-        private const int SpamThreshold = 60;
-
         public static void PatchAll(HarmonyLib.Harmony harmony)
         {
-            // Instead of patching 600+ methods, we target the specific interaction entry points
-            // most likely used by the Inspect UI Spacebar consumption action.
-            System.Type[] targetTypes = { typeof(Il2Cpp.PlayerManager), typeof(Il2Cpp.GearItem), typeof(Il2Cpp.WaterSupply) };
-
-            string[] suspiciousMethods = {
-                "ProcessInteraction",
-                "UseInventoryItem",
-                "DrinkFromWaterSupply",
-                "OnEquipFromDrinkableLiquidItemInspection",
-                "DoSpecialActionFromInspectMode",
-                "OnTakeWaterComplete"
+            System.Type[] targetTypes = new System.Type[]
+            {
+                typeof(Il2Cpp.Panel_ActionPicker),
+                typeof(Il2Cpp.Panel_Cooking)
             };
 
             var prefix = typeof(MethodSniffer).GetMethod(nameof(SniffPrefix), BindingFlags.Static | BindingFlags.Public);
             var harmonyMethod = new HarmonyMethod(prefix);
-
             int patchedCount = 0;
 
-            foreach (var type in targetTypes)
+            foreach (var targetType in targetTypes)
             {
-                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                foreach (var method in targetType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                 {
-                    if (System.Array.IndexOf(suspiciousMethods, method.Name) >= 0)
+                    string name = method.Name;
+                    string lowerName = name.ToLower();
+
+                    // 1. EXPLICITLY IGNORE FRAME-BY-FRAME UI CHECKS & GETTERS
+                    if (name.Contains("Update") || name.StartsWith("get_") || name.StartsWith("set_") ||
+                        name == "Awake" || name == "Start" || name == "LateUpdate" || name == "Initialize" ||
+                        name.Contains("Fade") || name.Contains("Prep") || name.Contains("Hover") ||
+                        name.Contains("Refresh") || name.Contains("Progress") || name.StartsWith("Get") || name.StartsWith("Is"))
+                        continue;
+
+                    // 2. EXPLICITLY REQUIRE INTERACTION VERBS
+                    if (!lowerName.Contains("click") && !lowerName.Contains("place") &&
+                        !lowerName.Contains("select") && !lowerName.Contains("action") &&
+                        !lowerName.Contains("execute") && !lowerName.Contains("use"))
+                        continue;
+
+                    try
                     {
-                        try
-                        {
-                            harmony.Patch(method, prefix: harmonyMethod);
-                            patchedCount++;
-                        }
-                        catch { }
+                        harmony.Patch(method, prefix: harmonyMethod);
+                        patchedCount++;
                     }
+                    catch { }
                 }
             }
-            MelonLogger.Msg($"[Method Sniffer] Targeted {patchedCount} specific interaction methods. THREAD-SAFE logging active!");
+            MelonLogger.Msg($"[Method Sniffer] Tracking {patchedCount} hyper-filtered UI methods!");
         }
 
         public static void SniffPrefix(MethodBase __originalMethod)
         {
             try
             {
-                string methodName = __originalMethod.Name;
-                int count = methodCallCounts.AddOrUpdate(methodName, 1, (key, oldValue) => oldValue + 1);
-
-                if (count <= SpamThreshold)
-                {
-                    string fullMethodName = $"{__originalMethod.DeclaringType.Name}::{methodName}";
-                    MelonLogger.Msg($"[UI CLICK TRACER] Fired: {fullMethodName}");
-                }
-
-                if (count == SpamThreshold)
-                {
-                    MelonLogger.Msg($"[UI CLICK TRACER] [MUTED] {__originalMethod.Name} reached spam threshold.");
-                }
+                MelonLogger.Msg($"[ROOT TRACER] UI Fired: {__originalMethod.DeclaringType.Name}::{__originalMethod.Name}");
             }
             catch { }
         }

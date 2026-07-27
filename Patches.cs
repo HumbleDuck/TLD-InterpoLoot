@@ -7,15 +7,89 @@ using UnityEngine;
 
 namespace InterpoLoot
 {
+    public static class PatchHelper
+    {
+        // Identifies any object belonging to a cooking station, no matter how weird the hierarchy is
+        public static bool IsCookingStation(GameObject obj)
+        {
+            if (obj == null) return false;
+
+            if (obj.GetComponent<Il2Cpp.GearPlacePoint>() != null) return true;
+            if (obj.GetComponentInParent<Il2Cpp.GearPlacePoint>() != null) return true;
+
+            Transform curr = obj.transform;
+            int depth = 0;
+            while (curr != null && depth < 4)
+            {
+                if (curr.GetComponentInChildren<Il2Cpp.Fire>() != null ||
+                    curr.GetComponentInChildren<Il2Cpp.WoodStove>() != null ||
+                    curr.GetComponentInChildren<Il2Cpp.Campfire>() != null)
+                {
+                    return true;
+                }
+                curr = curr.parent;
+                depth++;
+            }
+            return false;
+        }
+
+        // Mathematically maps a physical mesh hit to the closest hidden slot for Inspect Mode snapping
+        public static GameObject GetExactSlotUnderCrosshair(GameObject originalResult, Vector3 hitPoint)
+        {
+            Transform curr = originalResult.transform;
+            Transform stationRoot = curr;
+            int depth = 0;
+
+            // Climb to the root interactive body of the stove
+            while (curr != null && depth < 5)
+            {
+                if (curr.GetComponentInChildren<Il2Cpp.Fire>() != null ||
+                    curr.GetComponentsInChildren<Il2Cpp.GearPlacePoint>(true).Length > 0)
+                {
+                    stationRoot = curr;
+                    break;
+                }
+                curr = curr.parent;
+                depth++;
+            }
+
+            var allSlots = stationRoot.GetComponentsInChildren<Il2Cpp.GearPlacePoint>(true);
+            if (allSlots.Length == 0) return originalResult;
+
+            Il2Cpp.GearPlacePoint closestSlot = null;
+            float minDistance = 0.45f; // Tight radius to ensure we only substitute if actually aiming near the burner
+
+            foreach (var slot in allSlots)
+            {
+                float dist = Vector3.Distance(hitPoint, slot.transform.position);
+                if (dist < minDistance)
+                {
+                    minDistance = dist;
+                    closestSlot = slot;
+                }
+            }
+
+            return closestSlot != null ? closestSlot.gameObject : originalResult;
+        }
+    }
+
     [HarmonyPatch(typeof(PlayerManager), nameof(PlayerManager.InteractiveObjectsProcessInteraction))]
     public class PlayerManager_InteractiveObjectsProcessInteraction
     {
         public static bool Prefix(PlayerManager __instance, ref bool __result)
         {
+            if (InterpoLootMain.isAnimatingPlacement) return true;
             if (Settings.options.VanillaLooseItemInteractions) return true;
 
             GameObject crosshairObj = __instance.GetInteractiveObjectUnderCrosshairs(InterpoLootMain.vanillaInteractRange);
             if (crosshairObj == null) return true;
+
+            // Never block clicks on ANY part of a stove/fire. This allows vanilla to 
+            // natively pinpoint the exact burner you clicked to open the Action Picker on!
+            if (PatchHelper.IsCookingStation(crosshairObj))
+            {
+                return true;
+            }
 
             GearItem gearItem = crosshairObj.GetComponent<GearItem>();
             if (gearItem == null) gearItem = crosshairObj.GetComponentInParent<GearItem>();
@@ -27,21 +101,82 @@ namespace InterpoLoot
 
                 if (pot != null && (pot.m_GearPlacePointAttachedTo != null || pot.m_FireBeingUsed != null))
                 {
-                    return true; // Let vanilla handle cooking interactions
+                    return true;
                 }
 
                 if (InterpoLootMain.ShouldLetVanillaHandleInteraction(gearItem))
                 {
-                    return true; // Let vanilla equip lit light sources immediately
+                    return true;
                 }
 
-                // We handle all interaction logic (Quick Loot, Inspect, Drag) in InterpoLootMain.OnUpdate
-                // Block the vanilla interaction so it doesn't conflict
                 __result = false;
                 return false;
             }
 
             return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(Il2Cpp.GearPlacePoint), nameof(Il2Cpp.GearPlacePoint.DropAndPlaceItem))]
+    internal class GearPlacePoint_DropAndPlaceItem_Patch
+    {
+        public static bool isRedirecting = false;
+
+        private static bool Prefix(Il2Cpp.GearPlacePoint __instance, GearItem newPlacedItem)
+        {
+            if (isRedirecting) return true;
+
+            var hoveredSlot = PlayerManager_GetInteractiveObjectUnderCrosshairs_Patch.LastHoveredSlot;
+
+            // If vanilla is trying to place on a slot, but we were aiming at a DIFFERENT slot...
+            if (hoveredSlot != null && hoveredSlot != __instance)
+            {
+                // Make sure both slots belong to the same stove to prevent teleporting items across the room!
+                if (__instance.transform.root == hoveredSlot.transform.root)
+                {
+                    // Verify the slot we actually wanted is empty
+                    if (hoveredSlot.m_PlacedGear == null)
+                    {
+                        // REDIRECT!
+                        isRedirecting = true;
+                        hoveredSlot.DropAndPlaceItem(newPlacedItem);
+                        isRedirecting = false;
+
+                        // Abort the wrong sequential placement
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        private static void Postfix(Il2Cpp.GearPlacePoint __instance, GearItem newPlacedItem)
+        {
+            GearItem placedGear = __instance.m_PlacedGear;
+            if (placedGear == null || newPlacedItem == null || InterpoLootMain.isAnimatingPlacement) return;
+
+            // Did we place exactly what we thought? (e.g. a normal Cooking Pot)
+            bool isDirectHit = (placedGear == newPlacedItem);
+
+            // Or did vanilla spawn a dummy pot and wrap our item inside it? (e.g. Potatoes, Meat)
+            bool isDummyHit = (placedGear.name.Contains("Dummy") && newPlacedItem.transform.IsChildOf(placedGear.transform));
+
+            if (isDirectHit)
+            {
+                InterpoLootMain.lastPlacedGearItem = placedGear; // Cache the actual root object on the stove
+                GameAudioManager.PlaySound("Play_ClothRustle", GameManager.GetPlayerObject());
+                InterpoLootMain.AnimateItemToSlot(placedGear.gameObject, __instance.transform.position, __instance.transform.rotation);
+            }
+            else if (isDummyHit)
+            {
+                InterpoLootMain.lastPlacedGearItem = placedGear; // Cache the dummy as the core object
+                GameAudioManager.PlaySound("Play_ClothRustle", GameManager.GetPlayerObject());
+
+                // The magic trick: animate the FOOD (newPlacedItem), not the DUMMY!
+                // The dummy stays instantly snapped natively, but the food inside it 
+                // gets invisible-materialed and visually interpolated!
+                InterpoLootMain.AnimateItemToSlot(newPlacedItem.gameObject, newPlacedItem.transform.position, newPlacedItem.transform.rotation);
+            }
         }
     }
 
@@ -58,6 +193,11 @@ namespace InterpoLoot
                 GameObject crosshairObj = pm.GetInteractiveObjectUnderCrosshairs(InterpoLootMain.vanillaInteractRange);
                 if (crosshairObj != null)
                 {
+                    if (PatchHelper.IsCookingStation(crosshairObj))
+                    {
+                        return true;
+                    }
+
                     GearItem gearItem = crosshairObj.GetComponent<GearItem>();
                     if (gearItem == null) gearItem = crosshairObj.GetComponentInParent<GearItem>();
 
@@ -68,15 +208,14 @@ namespace InterpoLoot
 
                         if (pot != null && (pot.m_GearPlacePointAttachedTo != null || pot.m_FireBeingUsed != null))
                         {
-                            return true; // Let vanilla handle cooking interactions
+                            return true;
                         }
 
                         if (InterpoLootMain.ShouldLetVanillaHandleInteraction(gearItem))
                         {
-                            return true; // Let vanilla equip lit light sources immediately
+                            return true;
                         }
 
-                        // Block Fire action if we are hovering over an item our mod handles!
                         __result = false;
                         return false;
                     }
@@ -89,29 +228,64 @@ namespace InterpoLoot
     [HarmonyPatch(typeof(PlayerManager), nameof(PlayerManager.GetInteractiveObjectUnderCrosshairs))]
     internal class PlayerManager_GetInteractiveObjectUnderCrosshairs_Patch
     {
+        public static Il2Cpp.GearPlacePoint LastHoveredSlot = null;
+
         private static void Prefix(float __0)
         {
-            if (__0 != InterpoLootMain.vanillaInteractRange && __0 < 10f)
-            {
-                InterpoLootMain.vanillaInteractRange = __0;
-            }
+            if (__0 != InterpoLootMain.vanillaInteractRange && __0 < 10f) InterpoLootMain.vanillaInteractRange = __0;
         }
 
         private static void Postfix(PlayerManager __instance, ref GameObject __result)
         {
+            if (InterpoLootMain.isAnimatingPlacement) return;
+
+            // --- 1. INSPECT MODE (Placing items directly from hands) ---
             if (__instance.IsInspectModeActive() && !InterpoLootMain.isBuggedVanillaInspect)
             {
-                __result = null;
+                if (__result != null)
+                {
+                    if (__result.GetComponent<Il2Cpp.GearPlacePoint>() != null ||
+                        __result.GetComponentInParent<Il2Cpp.GearPlacePoint>() != null)
+                    {
+                        return;
+                    }
+
+                    if (PatchHelper.IsCookingStation(__result))
+                    {
+                        Transform cam = GameManager.GetMainCamera().transform;
+                        if (UnityEngine.Physics.Raycast(cam.position, cam.forward, out UnityEngine.RaycastHit hit, InterpoLootMain.vanillaInteractRange + 1f))
+                        {
+                            GameObject exactSlot = PatchHelper.GetExactSlotUnderCrosshair(__result, hit.point);
+                            if (exactSlot.GetComponent<Il2Cpp.GearPlacePoint>() != null)
+                            {
+                                __result = exactSlot;
+                                return;
+                            }
+                        }
+                    }
+
+                    __result = null;
+                }
                 return;
             }
 
+            // --- 2. NORMAL MODE (Hovering, opening Action Picker) ---
             bool isOverlay = InterfaceManager.IsOverlayActiveImmediate();
             bool isNormal = (__instance.GetControlMode() == PlayerControlMode.Normal || __instance.GetControlMode() == PlayerControlMode.InVehicle);
 
-            if (!isNormal || isOverlay)
+            // If a UI element like the Action Picker is open, freeze! 
+            // This perfectly locks LastHoveredSlot to whatever you were aiming at when you clicked.
+            if (!isNormal || isOverlay) return;
+
+            LastHoveredSlot = null; // Clear it every frame when freely walking around
+            if (__result != null && PatchHelper.IsCookingStation(__result))
             {
-                // FREEZE tracking if in a UI or not normal.
-                return;
+                Transform cam = GameManager.GetMainCamera().transform;
+                if (UnityEngine.Physics.Raycast(cam.position, cam.forward, out UnityEngine.RaycastHit hit, InterpoLootMain.vanillaInteractRange + 1f))
+                {
+                    GameObject exactSlotObj = PatchHelper.GetExactSlotUnderCrosshair(__result, hit.point);
+                    LastHoveredSlot = exactSlotObj.GetComponent<Il2Cpp.GearPlacePoint>();
+                }
             }
 
             if (__result != null)
@@ -119,11 +293,18 @@ namespace InterpoLoot
                 GearItem inspectedGear = __instance.GearItemBeingInspected();
                 if (inspectedGear != null && (__result == inspectedGear.gameObject || __result.transform.IsChildOf(inspectedGear.transform)))
                 {
-                    __result = null;
-                    return;
+                    var stalePot = inspectedGear.GetComponent<Il2Cpp.CookingPotItem>();
+                    if (stalePot == null) stalePot = inspectedGear.GetComponentInParent<Il2Cpp.CookingPotItem>();
+
+                    bool potIsOnStove = stalePot != null &&
+                                        (stalePot.m_GearPlacePointAttachedTo != null || stalePot.m_FireBeingUsed != null);
+                    if (!potIsOnStove)
+                    {
+                        __result = null;
+                        return;
+                    }
                 }
 
-                // ALSO ignore any items that are currently interpolating in a Quick Loot animation!
                 GearItem hitGear = __result.GetComponent<GearItem>();
                 if (hitGear != null)
                 {
@@ -134,13 +315,10 @@ namespace InterpoLoot
                     }
                     else
                     {
-                        // Continually track the TRUE world position of the item we are looking at!
-                        // This guarantees we have the exact position if they click it, before the engine moves it!
                         InterpoLootMain.lastInspectedItemOriginalPosition = hitGear.transform.position;
                         InterpoLootMain.lastInspectedItemOriginalRotation = hitGear.transform.rotation;
                     }
                 }
-
                 InterpoLootMain.lastCrosshairHitPosition = __instance.m_LocationOfLastInteractHit;
             }
         }
@@ -158,14 +336,13 @@ namespace InterpoLoot
             if (gear != null)
             {
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
-
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
 
                 InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => { }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
 
                 InterpoLootMain.isTakingItem = true;
             }
-            return true; // Let vanilla handle inventory insertion and harvest queue
+            return true;
         }
 
         private static void Postfix()
@@ -187,7 +364,7 @@ namespace InterpoLoot
 
                 InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => { }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, gear.transform.rotation);
             }
-            return true; // Let vanilla handle container removal
+            return true;
         }
     }
 
@@ -216,8 +393,6 @@ namespace InterpoLoot
                 }
             }
 
-            // We place the item at the player's feet, which simulates the vanilla behavior 
-            // for dropping an item from the inventory.
             if (GameManager.GetPlayerObject() != null)
             {
                 InterpoLootMain.lastInspectedItemOriginalPosition = GameManager.GetPlayerObject().transform.position + Vector3.up * 0.1f;
@@ -271,10 +446,10 @@ namespace InterpoLoot
                     Vector3 origScale = __0.transform.localScale;
                     __0.transform.localScale = Vector3.zero;
 
-                    // Fix: If it's a cooking pot item (like an open can of beans) that is physically attached to a stove, 
-                    // UseInventoryItem will get confused if called 0.5s later because the Cooking UI was closed.
-                    // Instead, we manually pop it into the player's inventory right before eating it!
-                    if (__0.m_CookingPotItem != null && __0.m_CookingPotItem.m_GearPlacePointAttachedTo != null)
+                    var pot = __0.GetComponent<Il2Cpp.CookingPotItem>();
+                    if (pot == null) pot = __0.GetComponentInParent<Il2Cpp.CookingPotItem>();
+
+                    if (pot != null && pot.m_GearPlacePointAttachedTo != null)
                     {
                         InterpoLootMain.isTakingItem = true;
                         __instance.ProcessPickupItemInteraction(__0, false, false, false);
@@ -286,13 +461,11 @@ namespace InterpoLoot
                     __instance.UseInventoryItem(__0, false);
                     InterpoLootMain.isEatingFromInspect = false;
 
-                    // Restore the scale just in case it survives as an inventory item (partial consumption)!
                     if (__0 != null) __0.transform.localScale = origScale;
                 }, startPos, InterpoLootMain.lastInspectedItemOriginalScale, null, startRot);
                 return false;
             }
 
-            // Ensure we pass 'false' for reopenInventory so it stays closed
             InterpoLootMain.StartRadialConsumptionAnimation(__0, false);
             return false;
         }
@@ -329,7 +502,10 @@ namespace InterpoLoot
                         Vector3 origScale = gearItem.transform.localScale;
                         gearItem.transform.localScale = Vector3.zero;
 
-                        if (gearItem.m_CookingPotItem != null && gearItem.m_CookingPotItem.m_GearPlacePointAttachedTo != null)
+                        var pot = gearItem.GetComponent<Il2Cpp.CookingPotItem>();
+                        if (pot == null) pot = gearItem.GetComponentInParent<Il2Cpp.CookingPotItem>();
+
+                        if (pot != null && pot.m_GearPlacePointAttachedTo != null)
                         {
                             InterpoLootMain.isTakingItem = true;
                             __instance.ProcessPickupItemInteraction(gearItem, false, false, false);
@@ -349,7 +525,6 @@ namespace InterpoLoot
                 float volumeToDrink = __instance.CalculateWaterVolumeToDrink(__0.m_VolumeInLiters).ToQuantity(1f);
                 string prefabName = volumeToDrink <= 0.5f ? "GEAR_Water500ml" : "GEAR_Water1000ml";
 
-                // Ensure we pass 'false' for reopenInventory so it stays closed
                 InterpoLootMain.StartRadialConsumptionAnimation(gearItem, false, null, prefabName);
             }
             return false;
@@ -371,13 +546,10 @@ namespace InterpoLoot
             {
                 InterpoLootMain.lastInspectedItemOriginalScale = gear.transform.localScale;
 
-
-                // Lock in the absolute world position of a loose item before the engine moves it to the camera!
                 if (c == null && h == null)
                 {
                     InterpoLootMain.lastInspectedItemOriginalPosition = gear.transform.position;
                     InterpoLootMain.lastInspectedItemOriginalRotation = gear.transform.rotation;
-
                 }
             }
             InterpoLootMain.inspectingContainerItem = (c != null);
@@ -386,12 +558,10 @@ namespace InterpoLoot
                 if (InterpoLootMain.lastCrosshairHitPosition != UnityEngine.Vector3.zero)
                 {
                     InterpoLootMain.lastInspectedItemOriginalPosition = InterpoLootMain.lastCrosshairHitPosition;
-
                 }
                 else
                 {
                     InterpoLootMain.lastInspectedItemOriginalPosition = c.transform.position;
-
                 }
                 InterpoLootMain.lastInspectedItemOriginalRotation = c.transform.rotation;
             }
@@ -436,23 +606,13 @@ namespace InterpoLoot
         {
             GearItem gear = __state;
 
-
-
-            // If vanilla failed to clean up and restore the item (which happens if it returns early or gets stuck)
-            // Note: For harvestables, vanilla intentionally leaves them active (dropped), but we still need to flush the stuck fields.
-            if (gear != null && gear.gameObject.activeInHierarchy)
+            if (gear != null)
             {
-                if (!InterpoLootMain.isInspectingHarvestable)
-                {
-                    InterpoLootMain.isBuggedVanillaInspect = true;
-                }
-
-                // FORCE CLEAR the stuck fields using Reflection!
+                // ALWAYS flush the stuck reflection variables, regardless of whether the 
+                // item was deactivated by being pulled into the inventory or not!
                 try
                 {
                     var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public;
-
-                    // Stop the coroutine (if exposed as property)
                     var routineProp = typeof(PlayerManager).GetProperty("m_InspectModeActiveCoroutine", flags);
                     if (routineProp != null)
                     {
@@ -464,85 +624,83 @@ namespace InterpoLoot
                         }
                     }
 
-                    // Clear the inspected item fields
                     var fields = typeof(PlayerManager).GetFields(flags);
-                    foreach (var prop in fields)
+                    foreach (var field in fields)
                     {
-                        if (prop.FieldType == typeof(GearItem))
+                        if (field.FieldType == typeof(GearItem))
                         {
-                            var val = prop.GetValue(__instance) as GearItem;
-                            if (val != null && val == gear)
-                            {
-                                prop.SetValue(__instance, null);
-                            }
+                            var val = field.GetValue(__instance) as GearItem;
+                            if (val != null && val == gear) field.SetValue(__instance, null);
                         }
-                        else if (prop.FieldType == typeof(UnityEngine.GameObject))
+                        else if (field.FieldType == typeof(UnityEngine.GameObject))
                         {
-                            var val = prop.GetValue(__instance) as UnityEngine.GameObject;
-                            if (val != null && val == gear.gameObject)
-                            {
-                                prop.SetValue(__instance, null);
-                            }
+                            var val = field.GetValue(__instance) as UnityEngine.GameObject;
+                            if (val != null && val == gear.gameObject) field.SetValue(__instance, null);
                         }
                     }
 
-                    // Clear the inspected item properties
                     var properties = typeof(PlayerManager).GetProperties(flags);
                     foreach (var prop in properties)
                     {
                         if (!prop.CanRead || !prop.CanWrite) continue;
-
                         if (prop.PropertyType == typeof(GearItem))
                         {
                             var val = prop.GetValue(__instance) as GearItem;
-                            if (val != null && val == gear)
-                            {
-                                prop.SetValue(__instance, null);
-                            }
+                            if (val != null && val == gear) prop.SetValue(__instance, null);
                         }
                         else if (prop.PropertyType == typeof(UnityEngine.GameObject))
                         {
                             var val = prop.GetValue(__instance) as UnityEngine.GameObject;
-                            if (val != null && val == gear.gameObject)
-                            {
-                                prop.SetValue(__instance, null);
-                            }
+                            if (val != null && val == gear.gameObject) prop.SetValue(__instance, null);
                         }
                     }
                 }
-                catch (System.Exception)
-                {
+                catch (System.Exception) { }
 
-                }
-
-                // Force it back to its original world position if it's a loose item
-                if (!InterpoLootMain.isInspectingHarvestable && !InterpoLootMain.isInspectingCookingPot)
+                // Only attempt to restore physics colliders and layers if the item is still alive in the world
+                if (gear.gameObject.activeInHierarchy)
                 {
-                    if (InterpoLootMain.lastInspectedItemOriginalPosition != Vector3.zero)
+                    var pot = gear.GetComponent<Il2Cpp.CookingPotItem>();
+                    if (pot == null) pot = gear.GetComponentInParent<Il2Cpp.CookingPotItem>();
+
+                    bool isAttachedToStove = (pot != null && pot.m_GearPlacePointAttachedTo != null);
+
+                    if (!isAttachedToStove)
                     {
-                        gear.transform.position = InterpoLootMain.lastInspectedItemOriginalPosition;
-                        gear.transform.rotation = InterpoLootMain.lastInspectedItemOriginalRotation;
-                        gear.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
+                        if (!InterpoLootMain.isInspectingHarvestable)
+                        {
+                            InterpoLootMain.isBuggedVanillaInspect = true;
+                        }
+
+                        if (!InterpoLootMain.isInspectingHarvestable && !InterpoLootMain.isInspectingCookingPot)
+                        {
+                            if (InterpoLootMain.lastInspectedItemOriginalPosition != UnityEngine.Vector3.zero)
+                            {
+                                gear.transform.position = InterpoLootMain.lastInspectedItemOriginalPosition;
+                                gear.transform.rotation = InterpoLootMain.lastInspectedItemOriginalRotation;
+                                gear.transform.localScale = InterpoLootMain.lastInspectedItemOriginalScale;
+                            }
+                        }
+
+                        if (!InterpoLootMain.isInspectingCookingPot)
+                        {
+                            UnityEngine.Collider rootCol = gear.GetComponent<UnityEngine.Collider>();
+                            if (rootCol != null) rootCol.enabled = true;
+
+                            foreach (UnityEngine.Collider col in gear.GetComponentsInChildren<UnityEngine.Collider>())
+                            {
+                                if (!col.isTrigger)
+                                    col.enabled = true;
+                            }
+                            gear.gameObject.layer = 17;
+                        }
+                        else
+                        {
+                            UnityEngine.Collider mainCol = gear.GetComponent<UnityEngine.Collider>();
+                            if (mainCol != null) mainCol.enabled = true;
+                        }
                     }
                 }
-
-                // Force colliders back on
-                if (!InterpoLootMain.isInspectingCookingPot)
-                {
-                    foreach (Collider col in gear.GetComponentsInChildren<Collider>())
-                    {
-                        col.enabled = true;
-                    }
-                }
-                else
-                {
-                    // For cooking pots, indiscriminately enabling child colliders breaks the liquid/snow meshes!
-                    // We only want to ensure the main collider is enabled.
-                    Collider mainCol = gear.GetComponent<Collider>();
-                    if (mainCol != null) mainCol.enabled = true;
-                }
-
-                gear.gameObject.layer = 17;
             }
 
             InterpoLootMain.inspectingContainerItem = false;
@@ -600,26 +758,20 @@ namespace InterpoLoot
                 if (pot == null) pot = gear.GetComponentInParent<Il2Cpp.CookingPotItem>();
                 if (pot != null && (pot.m_GearPlacePointAttachedTo != null || pot.m_FireBeingUsed != null))
                 {
-                    return true; // Let vanilla handle 'Pass Time' for snow/water on stoves
+                    return true;
                 }
 
                 Vector3 startPos = InterpoLootMain.lastInspectedItemOriginalPosition;
                 UnityEngine.Quaternion startRot = InterpoLootMain.lastInspectedItemOriginalRotation;
 
-                // 1. Create the visual clone and animate it to the face. 
-                // Pass 'null' for the lambda so it doesn't run ANY crashy manual logic!
-                // Pass 'true' at the end to bypass the HashSet so the destroyed original doesn't cause errors.
                 InterpoLootMain.StartQuickLootAnimation(gear.gameObject, null, null, startPos, null, null, startRot, null, true);
 
-                // 2. Set the flag to block your radial patch from firing
                 InterpoLootMain.isEatingFromInspect = true;
             }
 
-            // 3. Return TRUE to let vanilla execute its own flawless consumption logic!
             return true;
         }
 
-        // 4. Reset the flag after vanilla is done
         private static void Postfix()
         {
             InterpoLootMain.isEatingFromInspect = false;
@@ -633,21 +785,9 @@ namespace InterpoLoot
         {
             if (__0 != null && InterpoLootMain.interpolatingItems.Contains(__0.gameObject))
             {
-                return false; // Prevent vanilla from moving our animating item!
+                return false;
             }
             return true;
-        }
-
-        private static void Postfix(GearItem __0)
-        {
-            if (__0 != null)
-            {
-
-                foreach (Collider col in __0.GetComponentsInChildren<Collider>())
-                {
-
-                }
-            }
         }
     }
 
@@ -665,7 +805,6 @@ namespace InterpoLoot
 
             if (pot != null)
             {
-                // Temporarily disable the pot's colliders so the raycast hits the stove behind the 3D inspect UI
                 Collider[] colliders = pot.GetComponentsInChildren<Collider>();
                 bool[] states = new bool[colliders.Length];
                 for (int i = 0; i < colliders.Length; i++) { states[i] = colliders[i].enabled; colliders[i].enabled = false; }
@@ -689,7 +828,6 @@ namespace InterpoLoot
 
             if (gear != null)
             {
-                // Cloning solid food (meat, potatoes)
                 Vector3 startPos = GetStoveOrRaycastPos(__instance);
                 UnityEngine.Quaternion startRot = gear.transform.rotation;
 
@@ -697,20 +835,21 @@ namespace InterpoLoot
                 Il2Cpp.GearItem prefab = Il2Cpp.GearItem.LoadGearItemPrefab(prefabName);
                 Vector3 targetScale = prefab != null ? prefab.transform.localScale : gear.transform.localScale;
 
-                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, gear, () => { }, startPos, gear.transform.localScale, targetScale, startRot);
+                // Pass TRUE for bypassHashSet so it never gets permanently stuck as a ghost item!
+                InterpoLootMain.StartQuickLootAnimation(gear.gameObject, null, null, startPos, gear.transform.localScale, targetScale, startRot, null, true);
 
                 InterpoLootMain.isTakingItem = true;
             }
             else
             {
-                // Taking liquid (water)
                 GearItem waterPrefab = Il2Cpp.GearItem.LoadGearItemPrefab("GEAR_Water500ml");
                 if (waterPrefab != null)
                 {
                     Vector3 startPos = GetStoveOrRaycastPos(__instance);
                     UnityEngine.Quaternion startRot = __instance.transform.rotation;
 
-                    InterpoLootMain.StartQuickLootAnimation(waterPrefab.gameObject, null, null, startPos, waterPrefab.transform.localScale, null, startRot);
+                    // Pass TRUE for bypassHashSet
+                    InterpoLootMain.StartQuickLootAnimation(waterPrefab.gameObject, null, null, startPos, waterPrefab.transform.localScale, null, startRot, null, true);
 
                     InterpoLootMain.isTakingItem = true;
                 }
@@ -738,7 +877,6 @@ namespace InterpoLoot
 
             if (pot != null)
             {
-                // Temporarily disable the pot's colliders so the raycast hits the stove behind the 3D inspect UI
                 Collider[] colliders = pot.GetComponentsInChildren<Collider>();
                 bool[] states = new bool[colliders.Length];
                 for (int i = 0; i < colliders.Length; i++) { states[i] = colliders[i].enabled; colliders[i].enabled = false; }
@@ -762,7 +900,6 @@ namespace InterpoLoot
 
             if (gi.m_CookingPotItem != null && gi.m_CookingPotItem.m_GearPlacePointAttachedTo != null)
             {
-                // We are picking up a cooking pot (or pan/can) directly from a stove!
                 Vector3 startPos = GetStoveOrRaycastPos(gi.m_CookingPotItem);
                 UnityEngine.Quaternion startRot = gi.transform.rotation;
 
@@ -770,27 +907,20 @@ namespace InterpoLoot
             }
             else if (gi.name.ToLower().Contains("travois"))
             {
-                // When picking up the travois, the massive world sled is handled by vanilla, 
-                // and the folded gear item is instantly added to the inventory. 
-                // We simulate grabbing it from the ground by raycasting slightly in front of the camera.
                 Vector3 startPos = GetStoveOrRaycastPos(null);
 
                 InterpoLootMain.StartQuickLootAnimation(gi.gameObject, gi, () => { }, startPos, gi.transform.localScale, null, UnityEngine.Quaternion.identity);
             }
             else if (InterfaceManager.TryGetPanel<Panel_Container>(out var p) && p.isActiveAndEnabled)
             {
-                // LOOTING: Container -> Inventory
-                // This correctly hooks the underlying data logic layer so it only fires when a transfer actually happens!
                 UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
 
-                // Get the point on the container where they clicked, or default to front of camera
                 Vector3 containerPos = InterpoLootMain.lastCrosshairHitPosition != Vector3.zero
                     ? InterpoLootMain.lastCrosshairHitPosition
                     : GameManager.GetMainCamera().transform.position + (camFwd * 1.5f);
 
                 Vector3 startPos = containerPos + (camFwd * 0.5f);
 
-                // Pass 'true' at the end to bypass the HashSet so we can pull a stack instantly!
                 InterpoLootMain.StartQuickLootAnimation(gi.gameObject, null, null, startPos, gi.transform.localScale, null, gi.transform.rotation, null, true);
             }
         }
@@ -806,7 +936,6 @@ namespace InterpoLoot
             Transform camTransform = GameManager.GetMainCamera().transform;
             Vector3 startPos = camTransform.position + (camTransform.forward * 1.5f);
 
-            // Raycast on default layer to hit the toilet or sink
             if (Physics.Raycast(camTransform.position + (camTransform.forward * 0.3f), camTransform.forward, out RaycastHit hitInfo, 3f))
             {
                 startPos = hitInfo.point + (camTransform.forward * 0.15f);
@@ -935,8 +1064,6 @@ namespace InterpoLoot
         }
     }
 
-    // --- UI Transfer Patches ---
-
     public static class TransferManager
     {
         public static GearItem pendingItem = null;
@@ -950,17 +1077,15 @@ namespace InterpoLoot
         {
             var selectedItem = __instance.GetCurrentlySelectedItem();
             TransferManager.pendingItem = selectedItem?.m_GearItem;
-            TransferManager.isStashing = false; // Looting (Container -> Inventory)
+            TransferManager.isStashing = false;
         }
 
         private static void Postfix()
         {
             if (TransferManager.pendingItem == null) return;
 
-            // If the slider opened, DO NOT SPAWN YET! Leave pendingItem intact for Panel_PickUnits to use.
             if (InterfaceManager.TryGetPanel<Panel_PickUnits>(out var pu) && pu.isActiveAndEnabled) return;
 
-            // Single item transfer was successful!
             UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
             Vector3 containerPos = InterpoLootMain.lastCrosshairHitPosition != Vector3.zero
                 ? InterpoLootMain.lastCrosshairHitPosition
@@ -979,17 +1104,15 @@ namespace InterpoLoot
         {
             var selectedItem = __instance.GetCurrentlySelectedItem();
             TransferManager.pendingItem = selectedItem?.m_GearItem;
-            TransferManager.isStashing = true; // Stashing (Inventory -> Container)
+            TransferManager.isStashing = true;
         }
 
         private static void Postfix()
         {
             if (TransferManager.pendingItem == null) return;
 
-            // If the slider opened, DO NOT SPAWN YET!
             if (InterfaceManager.TryGetPanel<Panel_PickUnits>(out var pu) && pu.isActiveAndEnabled) return;
 
-            // Single item transfer was successful!
             UnityEngine.Vector3 camFwd = GameManager.GetMainCamera().transform.forward;
             Vector3 startPos = InterpoLootMain.GetPocketPosition();
             Vector3 containerPos = InterpoLootMain.lastCrosshairHitPosition != Vector3.zero
@@ -1007,7 +1130,6 @@ namespace InterpoLoot
     {
         private static void Prefix(Il2Cpp.Panel_PickUnits __instance)
         {
-            // Use the cached item that we perfectly saved BEFORE the slider broke the UI reference!
             if (__instance.m_numUnits > 0 && TransferManager.pendingItem != null)
             {
                 GearItem itemToTransfer = TransferManager.pendingItem;
@@ -1029,7 +1151,6 @@ namespace InterpoLoot
                     InterpoLootMain.StartQuickLootAnimation(itemToTransfer.gameObject, null, null, frontOfContainer, itemToTransfer.transform.localScale, null, itemToTransfer.transform.rotation, null, true);
                 }
 
-                // Clear it so it doesn't fire again improperly
                 TransferManager.pendingItem = null;
             }
         }
